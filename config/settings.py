@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-)&eaqs+sd*pcbvjb&8x_p)%-hv&#sp$hp(0179lia^4a^-zryl
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['10.0.2.2', '127.0.0.1', 'localhost']
+ALLOWED_HOSTS = ['192.168.0.127']
 
 
 # Application definition
@@ -56,10 +56,32 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
+ALLOWED_HOSTS = ['*']
+CORS_ALLOW_ALL_ORIGINS = True
+
+# 👇 Permitir todos los métodos (POST, GET, OPTIONS, PUT, DELETE, etc.)
+CORS_ALLOW_METHODS = [
+    "DELETE",
+    "GET",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
 ]
-# fdasdfdasfasf
+
+# 👇 Permitir todos los headers
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+]
+
 ROOT_URLCONF = 'config.urls'
 
 TEMPLATES = [
@@ -86,10 +108,10 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'clinica-vision',  # Nombre de la base de datos (en Supabase suele ser "postgres")
-        'USER': 'neondb_owner',  # Usuario por defecto, salvo que hayas creado otro
+        'NAME': 'clinica-vision',  # Nombre de la base de datos
+        'USER': 'neondb_owner',  # Usuario por defecto
         'PASSWORD': 'npg_nPsh6v3fyjRK',  # Copia el password del panel
-        'HOST': 'ep-cool-glade-ac6kkkjf-pooler.sa-east-1.aws.neon.tech',  # Host de Supabase
+        'HOST': 'ep-cool-glade-ac6kkkjf-pooler.sa-east-1.aws.neon.tech',  # Host de NEON
         'PORT': '5432',  # El puerto estándar
     }
 }

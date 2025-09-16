@@ -111,12 +111,25 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 class MedicoViewSet(viewsets.ModelViewSet):
     queryset = Medico.objects.all()
     serializer_class = MedicoSerializer
-    
+
+    def destroy(self, request, *args, **kwargs):
+        medico_instance = self.get_object()
+        usuario_a_eliminar = medico_instance.medico
+        try:
+            user_auth = User.objects.get(email=usuario_a_eliminar.correo)
+            user_auth.delete()
+        except User.DoesNotExist:
+            # Si el User de autenticación no existe, no hacemos nada y continuamos.
+            pass
+            
+        usuario_a_eliminar.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     # GET /api/medicos/ - Lista todos los médicos
     # POST /api/medicos/ - Crea nuevo médico
     # GET /api/medicos/{id}/ - Obtiene un médico
     # PUT /api/medicos/{id}/ - Actualiza médico completo
     # PATCH /api/medicos/{id}/ - Actualiza parcialmente
-    # DELETE /api/medicos/{id}/ - Elimina médico
+    # DELETE /api/medicos/{id}/ - Elimina médico y su usuario asociado
 
 
