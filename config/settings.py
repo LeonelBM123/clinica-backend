@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-)&eaqs+sd*pcbvjb&8x_p)%-hv&#sp$hp(0179lia^4a^-zryl
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -58,6 +58,7 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
+    "https://clincavisionex.netlify.app"
 ]
 # fdasdfdasfasf
 ROOT_URLCONF = 'config.urls'
