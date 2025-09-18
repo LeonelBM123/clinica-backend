@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.hashers import make_password
 from django.contrib.auth.models import User
-from .models import Usuario, Rol, Medico, Especialidad
+from .models import Usuario, Rol, Medico, Especialidad, Bitacora
 
 class RolSerializer(serializers.ModelSerializer):
     class Meta:
@@ -137,3 +137,15 @@ class MedicoSerializer(serializers.ModelSerializer):
             medico.especialidades.set(especialidades_data)
         
         return medico
+
+
+class BitacoraSerializer(serializers.ModelSerializer):
+    usuario = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Bitacora
+        fields = ['id', 'usuario', 'accion', 'ip', 'objeto', 'extra', 'timestamp']
+
+    def get_usuario(self, obj):
+        # adapta según tu modelo Usuario: mostramos el nombre
+        return obj.usuario.nombre if obj.usuario else None

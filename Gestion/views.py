@@ -1,14 +1,16 @@
 # views.py
 from django.shortcuts import get_object_or_404
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, generics, permissions
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
-from .models import Usuario, Rol, Medico, Especialidad
-from .serializers import UsuarioSerializer, RolSerializer, MedicoSerializer, EspecialidadSerializer
+from .models import Usuario, Rol, Medico, Especialidad, Bitacora
+from .serializers import UsuarioSerializer, RolSerializer, MedicoSerializer, EspecialidadSerializer, BitacoraSerializer
 from rest_framework.authtoken.models import Token
 from django.contrib.auth.models import User
 from rest_framework.permissions import IsAuthenticated,AllowAny
 from rest_framework.decorators import permission_classes
+from django.utils.dateparse import parse_date
+from .utils import log_action, get_actor_usuario_from_request
 # viewsets.ModelViewSet automáticamente crea los CRUD endpoints:
 
 class RolViewSet(viewsets.ModelViewSet):
@@ -37,16 +39,15 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     queryset = Usuario.objects.all()
     serializer_class = UsuarioSerializer
     
-    # GET /api/usuarios/ - Lista todos los usuarios
-    # POST /api/usuarios/ - Crea nuevo usuario
-    # GET /api/usuarios/{id}/ - Obtiene un usuario
-    # PUT /api/usuarios/{id}/ - Actualiza usuario completo
-    # PATCH /api/usuarios/{id}/ - Actualiza parcialmente
-    # DELETE /api/usuarios/{id}/ - Elimina usuario
+    # GET /api/usuarios/
+    # POST /api/usuarios/
+    # GET /api/usuarios/{id}/
+    # PUT /api/usuarios/{id}/
+    # PATCH /api/usuarios/{id}/
+    # DELETE /api/usuarios/{id}/
     
     @action(detail=True, methods=['post'])
     def cambiar_password(self, request, pk=None):
-        # Endpoint especial para cambiar contraseña
         usuario = self.get_object()
         nuevo_password = request.data.get('password')
 
@@ -58,6 +59,16 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 
         usuario.set_password(nuevo_password)
         usuario.save()
+
+        # Log de acción
+        actor = get_actor_usuario_from_request(request)
+        log_action(
+            request=request,
+            accion=f"Cambio de contraseña del usuario {usuario.nombre} (id:{usuario.id})",
+            objeto=f"Usuario: {usuario.nombre} (id:{usuario.id})",
+            usuario=actor
+        )
+
         return Response({'message': 'Contraseña actualizada correctamente'}, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
@@ -68,14 +79,43 @@ class UsuarioViewSet(viewsets.ModelViewSet):
 
         # Crear el User de Django (para login/tokens)
         User.objects.create_user(
-
-            username=data["correo"],  # usar correo como username
+            username=data["correo"],  
             email=data["correo"],
-            password=data["password"]  # recibir password del request
+            password=data["password"]  
         )
         # Guardar el Usuario normalmente
-        serializer.save()
+        usuario_obj = serializer.save()
 
+        # Log de acción
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Creó usuario {usuario_obj.nombre} (id:{usuario_obj.id})",
+            objeto=f"Usuario: {usuario_obj.nombre} (id:{usuario_obj.id})",
+            usuario=actor
+        )
+
+    def perform_update(self, serializer):
+        usuario_obj = serializer.save()
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Actualizó usuario {usuario_obj.nombre} (id:{usuario_obj.id})",
+            objeto=f"Usuario: {usuario_obj.nombre} (id:{usuario_obj.id})",
+            usuario=actor
+        )
+
+    def perform_destroy(self, instance):
+        nombre = instance.nombre
+        pk = instance.pk
+        actor = get_actor_usuario_from_request(self.request)
+        instance.delete()
+        log_action(
+            request=self.request,
+            accion=f"Eliminó usuario {nombre} (id:{pk})",
+            objeto=f"Usuario: {nombre} (id:{pk})",
+            usuario=actor
+        )
     @action(detail=False, methods=['post'])
     def login(self, request):
         correo = request.data.get('correo')
@@ -96,8 +136,17 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         # Obtener o crear token
         token, created = Token.objects.get_or_create(user=user)
 
-        # Si quieres, puedes incluir info del perfil extendido
+        # Perfil extendido
         usuario_perfil = get_object_or_404(Usuario, correo=correo)
+
+        # 🔥 Log de inicio de sesión
+        actor = get_actor_usuario_from_request(request)
+        log_action(
+            request=request,
+            accion=f"Inicio de sesión del usuario {usuario_perfil.nombre} (id:{usuario_perfil.id})",
+            objeto=f"Usuario: {usuario_perfil.nombre} (id:{usuario_perfil.id})",
+            usuario=actor
+        )
 
         return Response(
             {
@@ -108,19 +157,95 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK
         )
+
     @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
     def logout(self, request):
-        return Response({"message": "Cierre de sesion exitoso"}, status=status.HTTP_200_OK)
-            
+        try:
+            actor = Usuario.objects.get(correo=request.user.email)
+        except Usuario.DoesNotExist:
+            actor = None
+
+        log_action(
+            request=request,
+            accion=f"Cierre de sesión del usuario {actor.nombre} (id:{actor.id})" if actor else "Cierre de sesión de usuario anónimo",
+            objeto=f"Usuario: {actor.nombre} (id:{actor.id})" if actor else "Usuario anónimo",
+            usuario=actor
+        )
+
+        # Borrar token después de loggear
+        if hasattr(request.user, 'auth_token'):
+            request.user.auth_token.delete()
+
+        return Response({"message": "Cierre de sesión exitoso"}, status=status.HTTP_200_OK)
 
 class MedicoViewSet(viewsets.ModelViewSet):
     queryset = Medico.objects.all()
     serializer_class = MedicoSerializer
     
-    # GET /api/medicos/ - Lista todos los médicos
-    # POST /api/medicos/ - Crea nuevo médico
-    # GET /api/medicos/{id}/ - Obtiene un médico
-    # PUT /api/medicos/{id}/ - Actualiza médico completo
-    # PATCH /api/medicos/{id}/ - Actualiza parcialmente
-    # DELETE /api/medicos/{id}/ - Elimina médico
+    # GET /api/medicos/
+    # POST /api/medicos/
+    # GET /api/medicos/{id}/
+    # PUT /api/medicos/{id}/
+    # PATCH /api/medicos/{id}/
+    # DELETE /api/medicos/{id}/
 
+    def perform_create(self, serializer):
+        medico_obj = serializer.save()
+        actor = get_actor_usuario_from_request(self.request)
+        nombre = medico_obj.medico.nombre if medico_obj.medico else str(medico_obj)
+        log_action(
+            request=self.request,
+            accion=f"Creó médico {nombre} (id:{medico_obj.id})",
+            objeto=f"Medico: {nombre} (id:{medico_obj.id})",
+            usuario=actor
+        )
+
+    def perform_update(self, serializer):
+        medico_obj = serializer.save()
+        actor = get_actor_usuario_from_request(self.request)
+        nombre = medico_obj.medico.nombre if medico_obj.medico else str(medico_obj)
+        log_action(
+            request=self.request,
+            accion=f"Actualizó médico {nombre} (id:{medico_obj.id})",
+            objeto=f"Medico: {nombre} (id:{medico_obj.id})",
+            usuario=actor
+        )
+
+    def perform_destroy(self, instance):
+        nombre = instance.medico.nombre if instance.medico else str(instance)
+        pk = instance.pk
+        actor = get_actor_usuario_from_request(self.request)
+        instance.delete()
+        log_action(
+            request=self.request,
+            accion=f"Eliminó médico {nombre} (id:{pk})",
+            objeto=f"Medico: {nombre} (id:{pk})",
+            usuario=actor
+        )
+
+
+class BitacoraListAPIView(generics.ListAPIView):
+    permission_classes = [permissions.IsAdminUser]  # solo admins por seguridad
+    serializer_class = BitacoraSerializer
+    pagination_class = None  # puedes habilitar paginación si quieres
+
+    def get_queryset(self):
+        qs = Bitacora.objects.all()
+        start = self.request.query_params.get('start')  # YYYY-MM-DD
+        end = self.request.query_params.get('end')      # YYYY-MM-DD
+        usuario = self.request.query_params.get('usuario')
+        if start:
+            sd = parse_date(start)
+            if sd:
+                qs = qs.filter(timestamp__date__gte=sd)
+        if end:
+            ed = parse_date(end)
+            if ed:
+                qs = qs.filter(timestamp__date__lte=ed)
+        if usuario:
+            # filtra por id o por nombre parcial
+            if usuario.isdigit():
+                qs = qs.filter(usuario__id=int(usuario))
+            else:
+                qs = qs.filter(usuario__nombre__icontains=usuario)
+        return qs

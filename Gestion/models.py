@@ -156,3 +156,39 @@ class Medico(models.Model):
         verbose_name = "Médico"
         verbose_name_plural = "Médicos"
         ordering = ['medico__nombre']
+
+
+# Modelo de Bitacora
+class Bitacora(models.Model):
+    usuario = models.ForeignKey(
+        Usuario,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='bitacoras'
+    )
+    accion = models.TextField(
+        help_text="Descripción legible de la acción (ej: 'médico Pedro eliminó al paciente Juanito')"
+    )
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    objeto = models.CharField(
+        max_length=200,
+        null=True,
+        blank=True,
+        help_text="Texto corto indicando el objeto afectado (ej: 'Paciente: Juanito (id:4)')"
+    )
+    extra = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Información adicional en JSON (opcional)"
+    )
+    timestamp = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-timestamp']
+        verbose_name = 'Registro de bitácora'
+        verbose_name_plural = 'Bitácoras'
+
+    def __str__(self):
+        user = self.usuario.nombre if self.usuario else "Anónimo"
+        return f"{self.timestamp.isoformat()} — {user} — {self.accion[:80]}"
