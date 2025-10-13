@@ -4,8 +4,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import *
 from .serializers import *
-from apps.cuentas.models import Usuario
+from apps.cuentas.models import Usuario,Rol
 from apps.cuentas.utils import get_actor_usuario_from_request, log_action
+from django.contrib.auth.models import User
+
 
 class MultiTenantMixin:
     """Mixin para filtrar datos por grupo del usuario actual"""
@@ -207,6 +209,7 @@ class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             usuario=actor
         )
     
+    
     @action(detail=False, methods=['get'])
     def eliminadas(self, request):
         queryset = Paciente.objects.all()
@@ -234,7 +237,54 @@ class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             objeto=f"Paciente: {paciente.usuario.nombre} (id:{paciente.id})",
             usuario=actor
         )
-        
         serializer = self.get_serializer(paciente)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def perform_create(self, serializer):
+        # Asignar automáticamente el grupo del usuario que crea
+        try:
+                usuario = Usuario.objects.get(correo=self.request.user.email)
+                print(f"🔍 Usuario creador: {usuario}, Grupo: {usuario.grupo}")
+                
+                # ASIGNAR ROL PACIENTE AUTOMÁTICAMENTE
+                try:
+                    rol_paciente = Rol.objects.get(nombre='paciente')
+                except Rol.DoesNotExist:
+                    # Si no existe, buscar por ID 4 o crear uno
+                    try:
+                        rol_paciente = Rol.objects.get(id=4)
+                    except Rol.DoesNotExist:
+                        # Crear rol paciente si no existe
+                        rol_paciente = Rol.objects.create(
+                            nombre='paciente',
+                            descripcion='Paciente del sistema'
+                        )
 
+                print(f"🔍 Rol asignado: {rol_paciente.nombre} (ID: {rol_paciente.id})")
+                
+                # OBTENER Y HASHEAR LA CONTRASEÑA
+                validated_data = serializer.validated_data
+                password = validated_data.get('password')
+                
+                if password:
+                    from django.contrib.auth.hashers import make_password
+                    validated_data['password'] = make_password(password)
+                    print("🔍 Contraseña hasheada")
+                            # Crear también el User de Django
+                correo = validated_data.get('correo')
+                if correo and password:
+                    try:
+                        User.objects.create_user(
+                            username=correo,
+                            email=correo,
+                            password=password  # Django ya la hashea automáticamente
+                        )
+                        print("🔍 User de Django creado")
+                    except Exception as e:
+                        print(f"⚠️ Error creando User Django: {e}")
+        except Exception as e:
+                        print(f"⚠️ Error creando User Django: {e}")    
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+            
