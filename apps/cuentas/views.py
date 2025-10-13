@@ -206,6 +206,7 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
 
         usuario.set_password(nuevo_password)
         usuario.save()
+        
         return Response({'message': 'Contraseña actualizada correctamente'}, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
@@ -376,6 +377,9 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             usuario.set_password(nueva_password)
             usuario.token_reset_password = ""
             usuario.save()
+            user=User.objects.get(email=correo)
+            user.set_password(nueva_password)
+            user.save()
 
             return Response(
                 {"message": "Contraseña actualizada correctamente"},
