@@ -295,30 +295,28 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
 
-    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    @action(detail=False, methods=['post'])
+    @permission_classes([IsAuthenticated])
     def logout(self, request):
-        #eliminar token
-        user = request.user
         try:
-        
-            Token.objects.filter(user=user).delete()
-            
-            #registrar en bitacora
+            Token.objects.filter(user=request.user).delete()
+
             actor = get_actor_usuario_from_request(request)
             log_action(
                 request=request,
-                accion=f"Cierre de sesión del usuario {user.username}",
-                objeto=f"Usuario: {user.username}",
+                accion=f"Cierre de sesión del usuario {request.user.username}",
+                objeto=f"Usuario: {request.user.username}",
                 usuario=actor
             )
-            
+
             return Response({"message": "Cierre de sesión exitoso"}, status=status.HTTP_200_OK)
-        
+
         except Exception as e:
             return Response(
                 {"error": f"Ocurrió un error al cerrar sesión: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 
     @action(detail=False, methods=['post'])
     @permission_classes([AllowAny])

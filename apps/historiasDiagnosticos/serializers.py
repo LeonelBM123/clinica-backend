@@ -9,6 +9,22 @@ class PatologiasOSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['grupo']  # El grupo se asigna automáticamente
 
+class TratamientoMedicacionSerializer(serializers.ModelSerializer):
+    grupo_nombre = serializers.CharField(source='grupo.nombre', read_only=True)
+    patologias = serializers.PrimaryKeyRelatedField(
+        queryset=PatologiasO.objects.all(),
+        many=True,
+        required=False,
+    )
+    patologias_nombres = serializers.SerializerMethodField()  # <-- NUEVO
+    
+    class Meta:
+        model = TratamientoMedicacion
+        fields = '__all__'
+        read_only_fields = ['grupo']  # El grupo se asigna automáticamente
+
+    def get_patologias_nombres(self, obj):
+        return [p.nombre for p in obj.patologias.all()]
 
 class PacienteSerializer(serializers.ModelSerializer):
     usuario = serializers.PrimaryKeyRelatedField(

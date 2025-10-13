@@ -126,6 +126,57 @@ class PatologiasOViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(patologia)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+class TratamientoMedicacionViewSet(MultiTenantMixin, viewsets.ModelViewSet):
+    queryset = TratamientoMedicacion.objects.all() 
+    serializer_class = TratamientoMedicacionSerializer
+
+    def get_queryset(self):
+        queryset = TratamientoMedicacion.objects.all()
+        # Filtrar por grupo del usuario
+        queryset = self.filter_by_grupo(queryset)
+        return queryset
+
+    def perform_create(self, serializer):
+        # Asignar automáticamente el grupo del usuario que crea
+        usuario = Usuario.objects.get(correo=self.request.user.email)
+        tratamiento = serializer.save(grupo=usuario.grupo)
+        
+        # Log de la acción
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Creó el tratamiento {tratamiento.nombre} (id:{tratamiento.id})",
+            objeto=f"Tratamiento: {tratamiento.nombre} (id:{tratamiento.id})",
+            usuario=actor
+        )
+
+    def perform_update(self, serializer):
+        tratamiento = serializer.save()
+        
+        # Log de la acción
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Actualizó el tratamiento {tratamiento.nombre} (id:{tratamiento.id})",
+            objeto=f"Tratamiento: {tratamiento.nombre} (id:{tratamiento.id})",
+            usuario=actor
+        )
+
+    def perform_destroy(self, instance):
+        # Soft delete: solo cambia estado a False y actualiza fecha_modificacion
+        nombre = instance.nombre
+        pk = instance.pk
+        instance.delete()
+        
+        # Log de la acción
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Eliminó (soft delete) el tratamiento {nombre} (id:{pk})",
+            objeto=f"Tratamiento: {nombre} (id:{pk})",
+            usuario=actor
+        )
+
 
 class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Paciente.objects.all() 
@@ -138,10 +189,6 @@ class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             grupo = self.get_user_grupo()
             if grupo:
                 queryset = queryset.filter(usuario__grupo=grupo)
-        
-        # Por defecto, solo pacientes cuyo usuario está activo
-        if self.action == 'list':
-            return queryset.filter(usuario__estado=True)
         return queryset
 
     def perform_destroy(self, instance):

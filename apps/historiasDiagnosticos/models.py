@@ -57,6 +57,52 @@ class PatologiasO(models.Model):
     def __str__(self):
         return f"{self.nombre} ({self.grupo.nombre})"
 
+class TratamientoMedicacion(models.Model):
+    nombre = models.CharField(
+        max_length=120,
+        help_text="Nombre oficial del tratamiento") 
+    
+    descripcion = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Descripción del tratamiento")
+    
+    duracion_dias = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Duración del tratamiento en días")
+
+    patologias = models.ManyToManyField(
+        'PatologiasO',
+        related_name='tratamientos',
+        blank=True
+    )
+
+    grupo = models.ForeignKey(
+        Grupo, 
+        on_delete=models.CASCADE, 
+        related_name='tratamientos',
+        verbose_name="Grupo al que pertenece",
+        help_text="Tratamiento pertenece a este grupo/clínica"
+    )
+    
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_modificacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Tratamiento"
+        verbose_name_plural = "Tratamientos"
+        ordering = ['nombre']
+        indexes = [
+            models.Index(fields=['nombre']),
+            models.Index(fields=['grupo']),  
+        ]
+    
+    def __str__(self):
+        return f"{self.nombre} ({self.grupo.nombre})"
+
+
+
 class Paciente(models.Model):
     usuario = models.OneToOneField(Usuario, on_delete=models.CASCADE)
     numero_historia_clinica = models.CharField(max_length=64, unique=True,help_text="Ejemplo: HC-2023-0001")
