@@ -279,7 +279,7 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             request=request,
             accion=f"Inicio de sesión del usuario {usuario_perfil.nombre} (id:{usuario_perfil.id})",
             objeto=f"Usuario: {usuario_perfil.nombre} (id:{usuario_perfil.id})",
-            usuario=actor
+            usuario=usuario_perfil  # ✅ aquí va el usuario correcto
         )
         
         return Response(
