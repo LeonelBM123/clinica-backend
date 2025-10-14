@@ -106,12 +106,11 @@ DATABASES = {
          'NAME': 'clinica-vision',  # Nombre de la base de datos
          'USER': 'neondb_owner',  # Usuario por defecto
          'PASSWORD': 'npg_nPsh6v3fyjRK',  # Copia el password del panel
-         'HOST': 'ep-cool-glade-ac6kkkjf-pooler.sa-east-1.aws.neon.tech',  # Host de NEON
+         'HOST': 'ep-cool-glade-ac6kkkjf.sa-east-1.aws.neon.tech',  # Host de NEON
          'PORT': '5432',  # El puerto estándar
-        'OPTIONS': {
-            'sslmode': 'require',
-            'options': 'endpoint=ep-cool-glade-ac6kkkjf',
-        }
+         'OPTIONS': {
+             'sslmode': 'require',
+         }
      }
 }
 

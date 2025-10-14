@@ -185,17 +185,28 @@ class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     serializer_class = PacienteSerializer
 
     def get_queryset(self):
-        queryset = Paciente.objects.all()
-        # Filtrar por grupo a través del usuario
-        if not self.is_super_admin():
+        # Empezamos con el queryset optimizado de la clase
+        queryset = super().get_queryset()
+        
+        busqueda_global = self.request.query_params.get('busqueda_global', 'false').lower() == 'true'
+
+        # Si NO es una búsqueda global Y el usuario no es superadmin, aplicamos el filtro por grupo
+        if not busqueda_global and not self.is_super_admin():
             grupo = self.get_user_grupo()
             if grupo:
+                # Tu modelo Paciente se relaciona con Usuario, que a su vez tiene el grupo.
+                # La consulta correcta es a través de esa relación.
                 queryset = queryset.filter(usuario__grupo=grupo)
-        
-        # Por defecto, solo usuarios activos
-        if self.action == 'list':
+
+        # Filtramos por usuarios activos para la acción 'list', a menos que sea búsqueda global
+        if self.action == 'list' and not busqueda_global:
             queryset = queryset.filter(usuario__estado=True)
         
+        # (Opcional pero recomendado) Añadir capacidad de búsqueda por nombre
+        search_query = self.request.query_params.get('search', None)
+        if search_query:
+            queryset = queryset.filter(usuario__nombre__icontains=search_query)
+
         return queryset
 
     def perform_destroy(self, instance):
