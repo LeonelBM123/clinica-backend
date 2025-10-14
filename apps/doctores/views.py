@@ -7,8 +7,10 @@ from rest_framework import permissions
 from apps.cuentas.utils import get_actor_usuario_from_request, log_action
 from django.db.models import Q
 from apps.citas_pagos.models import Cita_Medica
+from apps.citas_pagos.serializers import HorarioDisponibleSerializer
 from .models import *
 from .serializers import *
+from .permissions import CanEditOrDeleteBloqueHorario
 from django.contrib.auth.models import User
 
 class MultiTenantMixin:
@@ -217,6 +219,60 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         
         serializer = self.get_serializer(medico)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    @action(detail=True, methods=['get'], url_path='horarios-disponibles')
+    def horarios_disponibles(self, request, pk=None):
+        """
+        Calcula y devuelve los slots de tiempo disponibles para un médico en una fecha específica.
+        Uso: GET /api/doctores/medicos/{pk}/horarios-disponibles/?fecha=YYYY-MM-DD
+        """
+        medico = self.get_object()
+        fecha_str = request.query_params.get('fecha')
+        
+        if not fecha_str:
+            return Response({'error': 'El parámetro "fecha" es requerido (YYYY-MM-DD).'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Formato de fecha inválido. Use AAAA-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        DIAS_SEMANA_MAP = {0: 'LUNES', 1: 'MARTES', 2: 'MIERCOLES', 3: 'JUEVES', 4: 'VIERNES', 5: 'SABADO', 6: 'DOMINGO'}
+        dia_semana = DIAS_SEMANA_MAP.get(fecha.weekday())
+        
+        bloques_del_dia = Bloque_Horario.objects.filter(medico=medico, dia_semana=dia_semana, estado=True)
+        citas_ocupadas = Cita_Medica.objects.filter(bloque_horario__medico=medico, fecha=fecha).exclude(estado_cita='CANCELADA')
+
+        horas_ocupadas_por_bloque = {}
+        citas_por_bloque = {}
+        for cita in citas_ocupadas:
+            bloque_id = cita.bloque_horario_id
+            if bloque_id not in horas_ocupadas_por_bloque:
+                horas_ocupadas_por_bloque[bloque_id] = set()
+                citas_por_bloque[bloque_id] = 0
+            horas_ocupadas_por_bloque[bloque_id].add(cita.hora_inicio)
+            citas_por_bloque[bloque_id] += 1
+            
+        horarios_disponibles = []
+        for bloque in bloques_del_dia:
+            if citas_por_bloque.get(bloque.id, 0) >= bloque.max_citas_por_bloque:
+                continue
+            
+            hora_actual_dt = datetime.combine(fecha, bloque.hora_inicio)
+            hora_fin_dt = datetime.combine(fecha, bloque.hora_fin)
+            intervalo = timedelta(minutes=bloque.duracion_cita_minutos)
+            
+            horas_ocupadas_set = horas_ocupadas_por_bloque.get(bloque.id, set())
+
+            while hora_actual_dt < hora_fin_dt:
+                hora_slot = hora_actual_dt.time()
+                if hora_slot not in horas_ocupadas_set:
+                    horarios_disponibles.append({'bloque_horario_id': bloque.id, 'hora_inicio': hora_slot})
+                hora_actual_dt += intervalo
+        
+        serializer = HorarioDisponibleSerializer(horarios_disponibles, many=True)
+        return Response(serializer.data)
+
 
 class TipoAtencionViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Tipo_Atencion.objects.all()
@@ -227,147 +283,97 @@ class TipoAtencionViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         return self.filter_by_grupo(queryset)
 
 class BloqueHorarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
-    queryset = Bloque_Horario.objects.all()
+    """
+    Gestiona el CRUD para los Bloques Horarios.
+    """
     serializer_class = BloqueHorarioSerializer
-
-    def get_user_medico(self):
-        """Devuelve el médico asociado al usuario logueado o None"""
-        try:
-            usuario = Usuario.objects.get(correo=self.request.user.email)
-            return getattr(usuario, 'medico', None)
-        except Usuario.DoesNotExist:
-            return None
-
+    queryset = Bloque_Horario.objects.all().select_related('medico', 'tipo_atencion')
 
     def get_queryset(self):
+        """
+        Filtra los bloques:
+        - Si el usuario es Médico, solo ve sus propios bloques.
+        - Si es Admin/Recepcionista, ve todos los bloques de su grupo.
+        """
         queryset = super().get_queryset()
-        queryset = self.filter_by_grupo(queryset)
-
-        # Filtrar por médico logueado
-        medico = self.get_user_medico()
-        if medico:
-            queryset = queryset.filter(medico=medico)
-
-        if self.action == 'list':
-            queryset = queryset.filter(estado=True)
-
-        return queryset.order_by('dia_semana', 'hora_inicio')
-
-    def create(self, request, *args, **kwargs):
-        """Override create para asignar grupo automáticamente"""
-        data = request.data.copy()
-
+        
+        # Primero, intenta obtener el perfil de médico del usuario.
+        # Asumo que tienes un método 'get_user_medico' en tu MultiTenantMixin.
+        # Si no, podemos añadirlo.
         try:
-            usuario = Usuario.objects.get(correo=request.user.email)
-            data['grupo'] = usuario.grupo.id
+            medico_logueado = Medico.objects.get(correo=self.request.user.email)
+            return queryset.filter(medico=medico_logueado)
+        except Medico.DoesNotExist:
+            # Si no es un médico, se asume que es un rol administrativo
+            # y se aplica el filtro por grupo del mixin.
+            return self.filter_by_grupo(queryset)
 
-            serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
-            headers = self.get_success_headers(serializer.data)
-            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-
-        except Usuario.DoesNotExist:
-            return Response(
-                {"error": "Usuario no válido"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except ValidationError as e:
-            return Response(
-                {"error": "Error de validación", "detalles": e.message_dict},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-            return Response(
-                {"error": str(e)}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    def get_permissions(self):
+        """
+        Asigna permisos específicos según la acción.
+        """
+        if self.action in ['update', 'partial_update', 'destroy']:
+            self.permission_classes = [permissions.IsAuthenticated, CanEditOrDeleteBloqueHorario]
+        else:
+            self.permission_classes = [permissions.IsAuthenticated]
+        return super().get_permissions()
 
     def perform_create(self, serializer):
-        """Asignar grupo automáticamente y guardar"""
-        try:
-            usuario = Usuario.objects.get(correo=self.request.user.email)
-            bloque = serializer.save(grupo=usuario.grupo)
-            bloque.full_clean()  # Ejecuta clean() y validaciones del modelo
+        """
+        Asigna el médico y el grupo de forma inteligente al crear un bloque.
+        """
+        medico_para_bloque = serializer.validated_data.get('medico')
+        
+        # Si el médico no vino en el formulario (porque el usuario logueado es médico)
+        if not medico_para_bloque:
+            try:
+                medico_para_bloque = Medico.objects.get(correo=self.request.user.email)
+            except Medico.DoesNotExist:
+                # Esto ocurre si un admin/recepcionista no selecciona un médico en el formulario
+                raise ValidationError({'medico': 'Debe seleccionar un médico para crear el bloque horario.'})
+        
+        if not medico_para_bloque:
+            raise ValidationError({'detail': 'No se pudo determinar el médico para este bloque horario.'})
+            
+        # Guardamos el bloque, asignando el médico correcto y el grupo de ese médico
+        bloque = serializer.save(medico=medico_para_bloque, grupo=medico_para_bloque.grupo)
 
-            # Log
-            actor = get_actor_usuario_from_request(self.request)
-            log_action(
-                request=self.request,
-                accion=f"Creó bloque horario: {bloque.dia_semana} {bloque.hora_inicio}-{bloque.hora_fin}",
-                objeto=f"Bloque Horario: {bloque}",
-                usuario=actor
-            )
-        except Usuario.DoesNotExist:
-            grupo = Grupo.objects.first()
-            bloque = serializer.save(grupo=grupo)
-            bloque.full_clean()
-
-    def perform_update(self, serializer):
-        """Logging en actualizaciones"""
-        bloque_actualizado = serializer.save()
-        bloque_actualizado.full_clean()
+        # Log de la acción
         actor = get_actor_usuario_from_request(self.request)
         log_action(
             request=self.request,
-            accion=f"Actualizó bloque horario: {bloque_actualizado.dia_semana} {bloque_actualizado.hora_inicio}-{bloque_actualizado.hora_fin}",
-            objeto=f"Bloque Horario: {bloque_actualizado}",
+            accion=f"Creó el bloque horario ID:{bloque.id} para {medico_para_bloque.nombre}",
+            objeto=f"Bloque_Horario: {bloque.id}",
+            usuario=actor
+        )
+
+    def perform_update(self, serializer):
+        """
+        Registra la acción al actualizar un bloque.
+        """
+        bloque = serializer.save()
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Actualizó el bloque horario ID:{bloque.id}",
+            objeto=f"Bloque_Horario: {bloque.id}",
             usuario=actor
         )
 
     def perform_destroy(self, instance):
-        """Soft delete con logging"""
-        nombre_bloque = str(instance)
-        instance.estado = False
-        instance.save()
+        """
+        Registra la acción al eliminar un bloque.
+        """
+        bloque_id = instance.id
+        dia_semana = instance.get_dia_semana_display()
+        
+        instance.delete()
+
         actor = get_actor_usuario_from_request(self.request)
         log_action(
             request=self.request,
-            accion=f"Eliminó bloque horario: {nombre_bloque}",
-            objeto=f"Bloque Horario: {nombre_bloque}",
+            accion=f"Eliminó el bloque horario ID:{bloque_id} del día {dia_semana}",
+            objeto=f"Bloque_Horario: {bloque_id}",
             usuario=actor
         )
 
-    # ENDPOINT PERSONALIZADO: bloques del médico logueado
-    @action(detail=False, methods=['get'])
-    def por_medico(self, request):
-        medico = self.get_user_medico()
-        if not medico:
-            return Response(
-                {"error": "Usuario no es médico o no tiene asociado un médico"}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
-        bloques = self.get_queryset().filter(medico=medico)
-        serializer = self.get_serializer(bloques, many=True)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=['get'])
-    def verificar_disponibilidad(self, request):
-        """Verificar disponibilidad de un horario"""
-        bloque_id = request.query_params.get('bloque_id')
-        fecha = request.query_params.get('fecha')
-        hora_inicio = request.query_params.get('hora_inicio')
-        hora_fin = request.query_params.get('hora_fin')
-
-        if not all([bloque_id, fecha, hora_inicio, hora_fin]):
-            return Response(
-                {"error": "Se requieren parámetros: bloque_id, fecha, hora_inicio, hora_fin"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            bloque = Bloque_Horario.objects.get(id=bloque_id)
-            citas_existentes = Cita_Medica.objects.filter(
-                bloque_horario=bloque,
-                fecha=fecha,
-                estado=True
-            ).filter(
-                Q(hora_inicio__lt=hora_fin, hora_fin__gt=hora_inicio)
-            )
-            disponible = not citas_existentes.exists()
-            return Response({
-                "disponible": disponible,
-                "citas_existentes": citas_existentes.count()
-            })
-        except Bloque_Horario.DoesNotExist:
-            return Response({"error": "Bloque horario no encontrado"}, status=status.HTTP_404_NOT_FOUND)

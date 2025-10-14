@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view
@@ -62,182 +62,121 @@ class MultiTenantMixin:
         return queryset
 
 class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
-    queryset = Cita_Medica.objects.all()
+    """
+    Gestiona el CRUD completo y las acciones personalizadas para las Citas Médicas.
+    """
+    # Usamos select_related para optimizar las consultas a la base de datos
+    queryset = Cita_Medica.objects.all().select_related('paciente', 'bloque_horario__medico', 'grupo')
     serializer_class = CitaMedicaSerializer
-    
+    permission_classes = [permissions.IsAuthenticated]
+
     def get_queryset(self):
-        """Filtra citas por grupo y médico (si es médico)"""
-        queryset = Cita_Medica.objects.all()
+        """
+        Filtra las citas de forma inteligente según el rol del usuario:
+        - Si es Médico, solo ve sus propias citas.
+        - Si es otro rol (Admin/Recepcionista), ve todas las citas de su grupo.
+        """
+        # Obtenemos el queryset base ya optimizado
+        queryset = super().get_queryset()
+        
+        # Filtramos por el grupo del usuario (lógica del MultiTenantMixin)
         queryset = self.filter_by_grupo(queryset)
         
-        # CORRECCIÓN: Usar get_user_medico() en lugar de hasattr
+        # Si el usuario es un médico, aplicamos un filtro adicional
         medico = self.get_user_medico()
         if medico:
             queryset = queryset.filter(bloque_horario__medico=medico)
-           
         
-        # Por defecto, solo citas activas
-        if self.action == 'list':
-            queryset = queryset.filter(estado=True)
-            
         return queryset.order_by('-fecha', '-hora_inicio')
 
-    def create(self, request, *args, **kwargs):
-        """Override create para asignar grupo automáticamente"""
-     
-        
-        # CORRECCIÓN: Crear copia de los datos y asignar grupo
-        data = request.data.copy()
-        
-        try:
-            usuario = Usuario.objects.get(correo=request.user.email)
-            data['grupo'] = usuario.grupo.id
-            
-            # CORRECCIÓN: Usar el serializer con los datos modificados
-            serializer = self.get_serializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
-            headers = self.get_success_headers(serializer.data)
-            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
-            
-        except Usuario.DoesNotExist:
-       
-            return Response(
-                {"error": "Usuario no válido"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        except Exception as e:
-          
-            return Response(
-                {"error": str(e)}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
     def perform_create(self, serializer):
-        """Asignar grupo y estado inicial"""
-        try:
-            usuario = Usuario.objects.get(correo=self.request.user.email)
-            cita = serializer.save(grupo=usuario.grupo, estado_cita='PENDIENTE')
-            
-            # Log de la acción
-            actor = get_actor_usuario_from_request(self.request)
-            log_action(
-                request=self.request,
-                accion=f"Creó cita médica para {cita.paciente.nombre} - {cita.fecha} {cita.hora_inicio}",
-                objeto=f"Cita Médica: {cita}",
-                usuario=actor
-            )
-      
-            
-        except Usuario.DoesNotExist:
-            grupo = Grupo.objects.first()
-            cita = serializer.save(grupo=grupo, estado_cita='PENDIENTE')
-          
+        """
+        Asigna datos automáticos (hora_fin, grupo) al crear una cita y registra el log.
+        """
+        bloque = serializer.validated_data.get('bloque_horario')
+        hora_inicio = serializer.validated_data.get('hora_inicio')
 
-    def perform_update(self, serializer):
-        """Logging en actualizaciones"""
-        # CORRECCIÓN: Obtener la cita antes de guardar para logging
-        cita = serializer.instance
-        cita_actualizada = serializer.save()
+        # Cálculo automático de la hora de fin
+        hora_inicio_dt = datetime.combine(datetime.today(), hora_inicio)
+        duracion = timedelta(minutes=bloque.duracion_cita_minutos)
+        hora_fin = (hora_inicio_dt + duracion).time()
         
-        # Log de la acción
+        # Guardamos la cita asignando los datos calculados y el grupo del bloque
+        cita = serializer.save(grupo=bloque.grupo, hora_fin=hora_fin)
+        
+        # --- Log de Acción ---
         actor = get_actor_usuario_from_request(self.request)
         log_action(
             request=self.request,
-            accion=f"Actualizó cita médica {cita.id} - {cita.paciente.nombre}",
-            objeto=f"Cita Médica: {cita}",
+            accion=f"Creó cita para {cita.paciente.nombre} el {cita.fecha} a las {cita.hora_inicio.strftime('%H:%M')}",
+            objeto=f"Cita ID: {cita.id}",
+            usuario=actor
+        )
+
+    def perform_update(self, serializer):
+        """
+        Registra el log al actualizar una cita.
+        """
+        cita_actualizada = serializer.save()
+        
+        # --- Log de Acción ---
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Actualizó la cita ID: {cita_actualizada.id} para el paciente {cita_actualizada.paciente.nombre}",
+            objeto=f"Cita ID: {cita_actualizada.id}",
             usuario=actor
         )
 
     def perform_destroy(self, instance):
-        """Soft delete"""
-        # CORRECCIÓN: Guardar información antes de modificar
-        cita_info = f"{instance.id} - {instance.paciente.nombre}"
+        """
+        Realiza un "soft delete" (desactivación) de la cita y registra el log.
+        """
+        cita_info = f"ID: {instance.id} - Paciente: {instance.paciente.nombre}"
         
         instance.estado = False
-        instance.estado_cita = 'CANCELADA'
+        # Es buena práctica cambiar el estado a 'CANCELADA' al eliminar lógicamente
+        if instance.estado_cita not in ['COMPLETADA', 'CANCELADA']:
+            instance.estado_cita = 'CANCELADA'
+            instance.motivo_cancelacion = "Cancelada por personal administrativo."
         instance.save()
         
-        # Log de la acción
+        # --- Log de Acción ---
         actor = get_actor_usuario_from_request(self.request)
         log_action(
             request=self.request,
-            accion=f"Canceló cita médica {cita_info}",
-            objeto=f"Cita Médica: {cita_info}",
+            accion=f"Canceló (soft delete) la cita: {cita_info}",
+            objeto=f"Cita ID: {instance.id}",
             usuario=actor
         )
 
-    # ENDPOINTS PERSONALIZADOS
-    @action(detail=False, methods=['get'])
-    def por_medico(self, request):
-        """Obtener citas por médico (para el médico logueado)"""
-        # CORRECCIÓN: Usar get_user_medico()
-        medico = self.get_user_medico()
-        if not medico:
-            return Response(
-                {"error": "Usuario no es un médico o no está asociado a un médico"}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        citas = self.get_queryset().filter(bloque_horario__medico=medico)
-        serializer = self.get_serializer(citas, many=True)
-        return Response(serializer.data)
+    # --- ACCIONES PERSONALIZADAS ---
 
-    @action(detail=False, methods=['get'])
-    def por_fecha(self, request):
-        """Obtener citas por fecha específica"""
-        fecha = request.query_params.get('fecha')
-        if not fecha:
-            return Response(
-                {"error": "Se requiere parámetro fecha (YYYY-MM-DD)"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # CORRECCIÓN: Validar formato de fecha
-        try:
-            datetime.strptime(fecha, '%Y-%m-%d')
-        except ValueError:
-            return Response(
-                {"error": "Formato de fecha inválido. Use YYYY-MM-DD"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        citas = self.get_queryset().filter(fecha=fecha)
-        serializer = self.get_serializer(citas, many=True)
-        return Response(serializer.data)
-
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], url_path='cambiar-estado')
     def cambiar_estado(self, request, pk=None):
-        """Cambiar estado de una cita"""
+        """
+        Permite cambiar el estado de una cita específica (ej: PENDIENTE -> CONFIRMADA).
+        """
         cita = self.get_object()
         nuevo_estado = request.data.get('estado_cita')
-        motivo = request.data.get('motivo_cancelacion', '')
         
-        if nuevo_estado not in dict(Cita_Medica.ESTADOS_CITA):
-            return Response(
-                {"error": "Estado no válido"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        if not nuevo_estado or nuevo_estado not in dict(Cita_Medica.ESTADOS_CITA):
+            return Response({"error": "Debe proporcionar un estado válido."}, status=status.HTTP_400_BAD_REQUEST)
         
-        # CORRECCIÓN: Validar transiciones de estado
-        estado_actual = cita.estado_cita
-        if estado_actual == 'COMPLETADA' and nuevo_estado != 'COMPLETADA':
-            return Response(
-                {"error": "No se puede modificar una cita completada"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+        estado_anterior = cita.estado_cita
         cita.estado_cita = nuevo_estado
-        if nuevo_estado == 'CANCELADA':
-            cita.motivo_cancelacion = motivo
-        cita.save()
         
-        # Log de la acción
-        actor = get_actor_usuario_from_request(request)
+        if nuevo_estado == 'CANCELADA':
+            cita.motivo_cancelacion = request.data.get('motivo_cancelacion', 'Sin motivo especificado.')
+            
+        cita.save()
+
+        # --- Log de Acción ---
+        actor = get_actor_usuario_from_request(self.request)
         log_action(
-            request=request,
-            accion=f"Cambió estado de cita {cita.id} de {estado_actual} a {nuevo_estado}",
-            objeto=f"Cita Médica: {cita}",
+            request=self.request,
+            accion=f"Cambió estado de cita ID {cita.id} de '{estado_anterior}' a '{nuevo_estado}'",
+            objeto=f"Cita ID: {cita.id}",
             usuario=actor
         )
         
@@ -246,71 +185,39 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def eliminadas(self, request):
-        """Citas eliminadas/desactivadas"""
-        eliminadas = self.get_queryset().filter(estado=False)
-        serializer = self.get_serializer(eliminadas, many=True)
+        """
+        Devuelve una lista de las citas que han sido desactivadas (soft delete).
+        """
+        # El queryset ya está filtrado por grupo/médico gracias a get_queryset
+        queryset = self.get_queryset().filter(estado=False)
+        serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
-    
+
     @action(detail=True, methods=['post'])
     def restaurar(self, request, pk=None):
-        """Restaurar cita eliminada"""
+        """
+        Restaura una cita que fue desactivada.
+        """
         cita = self.get_object()
         cita.estado = True
-        cita.estado_cita = 'PENDIENTE'  # CORRECCIÓN: Resetear estado
+        cita.estado_cita = 'CONFIRMADA' # Se restaura a un estado activo
         cita.save()
-        
-        # Log de la acción
-        actor = get_actor_usuario_from_request(request)
+
+        # --- Log de Acción ---
+        actor = get_actor_usuario_from_request(self.request)
         log_action(
-            request=request,
-            accion=f"Restauró cita médica {cita.id}",
-            objeto=f"Cita Médica: {cita}",
+            request=self.request,
+            accion=f"Restauró la cita ID: {cita.id}",
+            objeto=f"Cita ID: {cita.id}",
             usuario=actor
         )
         
         serializer = self.get_serializer(cita)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='estados-disponibles')
     def estados_disponibles(self, request):
-        """Obtener lista de estados disponibles"""
+        """
+        Devuelve un diccionario con los posibles estados de una cita y sus nombres.
+        """
         return Response(dict(Cita_Medica.ESTADOS_CITA))
-
-    # CORRECCIÓN: Agregar endpoint para disponibilidad
-    @action(detail=False, methods=['get'])
-    def verificar_disponibilidad(self, request):
-        """Verificar disponibilidad de horario para cita"""
-        bloque_id = request.query_params.get('bloque_id')
-        fecha = request.query_params.get('fecha')
-        hora_inicio = request.query_params.get('hora_inicio')
-        hora_fin = request.query_params.get('hora_fin')
-        
-        if not all([bloque_id, fecha, hora_inicio, hora_fin]):
-            return Response(
-                {"error": "Se requieren todos los parámetros: bloque_id, fecha, hora_inicio, hora_fin"}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            bloque = Bloque_Horario.objects.get(id=bloque_id)
-            # Validar disponibilidad (sin solapamientos)
-            citas_existentes = Cita_Medica.objects.filter(
-                bloque_horario=bloque,
-                fecha=fecha,
-                estado=True
-            ).filter(
-                Q(hora_inicio__lt=hora_fin, hora_fin__gt=hora_inicio)
-            )
-            
-            disponible = not citas_existentes.exists()
-            
-            return Response({
-                "disponible": disponible,
-                "citas_existentes": citas_existentes.count()
-            })
-            
-        except Bloque_Horario.DoesNotExist:
-            return Response(
-                {"error": "Bloque horario no encontrado"}, 
-                status=status.HTTP_404_NOT_FOUND
-            )

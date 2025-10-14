@@ -26,7 +26,8 @@ class Cita_Medica(models.Model):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_modificacion = models.DateTimeField(auto_now=True)
     motivo_cancelacion = models.TextField(blank=True, help_text="Motivo de la cancelación, si aplica")
-  
+    calificacion = models.IntegerField(null=True, blank=True, help_text="Calificación de la cita médica (1-5)")
+    comentario_calificacion = models.TextField(blank=True, help_text="Comentario sobre la calificación, si aplica")
     paciente = models.ForeignKey(Paciente, on_delete=models.CASCADE, related_name='citas')
     bloque_horario = models.ForeignKey(Bloque_Horario, on_delete=models.CASCADE, related_name='citas')
     grupo = models.ForeignKey(
