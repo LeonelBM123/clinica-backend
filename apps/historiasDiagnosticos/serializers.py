@@ -28,7 +28,7 @@ class TratamientoMedicacionSerializer(serializers.ModelSerializer):
 
 class PacienteSerializer(serializers.ModelSerializer):
     usuario = serializers.PrimaryKeyRelatedField(
-        queryset=Usuario.objects.filter(rol__nombre='paciente')  
+        queryset=Usuario.objects.filter(rol__nombre='paciente', estado=True)  
     )
     nombre = serializers.CharField(source='usuario.nombre', read_only=True)
     correo = serializers.CharField(source='usuario.correo', read_only=True)

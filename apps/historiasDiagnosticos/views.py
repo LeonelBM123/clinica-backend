@@ -4,8 +4,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import *
 from .serializers import *
-from apps.cuentas.models import Usuario
+from apps.cuentas.models import Usuario,Rol
 from apps.cuentas.utils import get_actor_usuario_from_request, log_action
+from django.contrib.auth.models import User
+
 
 class MultiTenantMixin:
     """Mixin para filtrar datos por grupo del usuario actual"""
@@ -189,6 +191,11 @@ class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             grupo = self.get_user_grupo()
             if grupo:
                 queryset = queryset.filter(usuario__grupo=grupo)
+        
+        # Por defecto, solo usuarios activos
+        if self.action == 'list':
+            queryset = queryset.filter(usuario__estado=True)
+        
         return queryset
 
     def perform_destroy(self, instance):
@@ -206,6 +213,7 @@ class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             objeto=f"Paciente: {nombre} (id:{pk})",
             usuario=actor
         )
+    
     
     @action(detail=False, methods=['get'])
     def eliminadas(self, request):
@@ -234,7 +242,21 @@ class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             objeto=f"Paciente: {paciente.usuario.nombre} (id:{paciente.id})",
             usuario=actor
         )
-        
         serializer = self.get_serializer(paciente)
         return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def perform_create(self, serializer):
+        # Solo crear el paciente con el usuario seleccionado
+        paciente = serializer.save()
+        
+        # Log de la acción
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Creó el paciente {paciente.usuario.nombre} (id:{paciente.id})",
+            objeto=f"Paciente: {paciente.usuario.nombre} (id:{paciente.id})",
+            usuario=actor
+        )
 
+
+            

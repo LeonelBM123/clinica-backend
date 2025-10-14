@@ -180,11 +180,12 @@ class UsuarioSerializer(serializers.ModelSerializer):
 
 class BitacoraSerializer(serializers.ModelSerializer):
     usuario = serializers.SerializerMethodField()
-    grupo_nombre = serializers.CharField(source='grupo.nombre', read_only=True)
+    grupo_nombre = serializers.CharField(source='grupo.nombre', default='', read_only=True)
 
     class Meta:
         model = Bitacora
         fields = ['id', 'usuario', 'grupo_nombre', 'accion', 'ip', 'objeto', 'extra', 'timestamp']
 
     def get_usuario(self, obj):
-        return obj.usuario.nombre if obj.usuario else None
+        # Si existe usuario, retorna el nombre, si no, retorna "Anónimo"
+        return obj.usuario.nombre if obj.usuario else "Anónimo"

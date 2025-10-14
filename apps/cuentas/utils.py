@@ -13,25 +13,43 @@ def get_actor_usuario_from_request(request):
     except:
         return None
 
+
 def log_action(request, accion, objeto=None, usuario=None):
     """
-    Registra una acción en la bitácora.
+    Registra una acción en la bitácora, asegurando grupo_id.
     """
     try:
         from .models import Bitacora
-        
-        # Obtener IP del request
+
         ip = get_client_ip(request)
-        
-        # Crear registro de bitácora
+
+        if not usuario:
+            usuario = get_actor_usuario_from_request(request)
+
+        grupo = None
+        # Si tenemos usuario, tomamos su grupo
+        if usuario and hasattr(usuario, 'grupo') and usuario.grupo:
+            grupo = usuario.grupo
+        else:
+            # Si no hay usuario (login, anon, etc.), intentar tomar el grupo del request
+            # Por ejemplo, si usas MultiTenantMixin, podrías agregar:
+            if hasattr(request, 'user') and request.user.is_authenticated:
+                from .models import Usuario
+                try:
+                    perfil = Usuario.objects.get(correo=request.user.email)
+                    grupo = perfil.grupo
+                except Usuario.DoesNotExist:
+                    pass
+
         Bitacora.objects.create(
             usuario=usuario,
+            grupo=grupo,
             accion=accion,
             ip=ip,
             objeto=objeto
         )
+
     except Exception as e:
-        # En caso de error, no fallar la operación principal
         print(f"Error al registrar en bitácora: {e}")
 
 def get_client_ip(request):

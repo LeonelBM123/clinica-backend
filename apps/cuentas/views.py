@@ -186,6 +186,12 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = Usuario.objects.all()
+        
+        # Filtrar por rol si se proporciona en query params--cambios hehco por alejandro 
+        rol_nombre = self.request.query_params.get('rol', None)
+        if rol_nombre:
+            queryset = queryset.filter(rol__nombre=rol_nombre)
+        
         return self.filter_by_grupo(queryset)
     
     def get_serializer_context(self):
@@ -206,6 +212,7 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
 
         usuario.set_password(nuevo_password)
         usuario.save()
+        
         return Response({'message': 'Contraseña actualizada correctamente'}, status=status.HTTP_200_OK)
 
     def perform_create(self, serializer):
@@ -279,7 +286,7 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             request=request,
             accion=f"Inicio de sesión del usuario {usuario_perfil.nombre} (id:{usuario_perfil.id})",
             objeto=f"Usuario: {usuario_perfil.nombre} (id:{usuario_perfil.id})",
-            usuario=actor
+            usuario=usuario_perfil  # ✅ aquí va el usuario correcto
         )
         
         return Response(
@@ -376,6 +383,9 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             usuario.set_password(nueva_password)
             usuario.token_reset_password = ""
             usuario.save()
+            user=User.objects.get(email=correo)
+            user.set_password(nueva_password)
+            user.save()
 
             return Response(
                 {"message": "Contraseña actualizada correctamente"},
