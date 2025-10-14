@@ -1,5 +1,6 @@
 #pendiente
 from django.db import models
+from django.forms import ValidationError
 from apps.cuentas.models import Usuario, Grupo
 
 # Modelo Especialidad
@@ -42,8 +43,6 @@ class Medico(Usuario):
         return f"Dr. {self.nombre} - {self.numero_colegiado}"
 
 
-#las nuevas clases creadas de la base 
-
 class Bloque_Horario(models.Model):
     dia_semana = models.CharField(
         max_length=10,
@@ -72,6 +71,26 @@ class Bloque_Horario(models.Model):
         related_name='bloques_horarios',
         verbose_name="Grupo al que pertenece",
     )
+
+    def clean(self):
+        super().clean()
+        
+        # Calcular duración total del bloque en minutos
+        from datetime import datetime
+        inicio = datetime.combine(datetime.today(), self.hora_inicio)
+        fin = datetime.combine(datetime.today(), self.hora_fin)
+        duracion_total_minutos = (fin - inicio).total_seconds() / 60
+        
+        # Calcular máximo teórico de citas
+        max_posible = duracion_total_minutos // self.duracion_cita_minutos
+        
+        if self.max_citas_por_bloque > max_posible:
+            raise ValidationError({
+                'max_citas_por_bloque': 
+                    f'No puede haber más de {max_posible} citas en este bloque '
+                    f'de {duracion_total_minutos} minutos con citas de {self.duracion_cita_minutos} minutos'
+            })
+
     class Meta:
         verbose_name = "Bloque Horario"
         verbose_name_plural = "Bloques Horarios"

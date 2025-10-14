@@ -5,6 +5,8 @@ from rest_framework.response import Response
 from rest_framework import generics
 from rest_framework import permissions
 from apps.cuentas.utils import get_actor_usuario_from_request, log_action
+from django.db.models import Q
+from apps.citas_pagos.models import Cita_Medica
 from .models import *
 from .serializers import *
 from django.contrib.auth.models import User
@@ -49,10 +51,10 @@ class MultiTenantMixin:
             )
             
             if has_grupo_field:
-                print(f"🔍 Filtering {model.__name__} by grupo: {grupo}")
+         
                 return queryset.filter(grupo=grupo)
         
-        print(f"🔍 No filtering applied for {queryset.model.__name__}")
+   
         return queryset
 
 class EspecialidadViewSet(viewsets.ModelViewSet):
@@ -75,15 +77,12 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         """Override create para debug"""
-        print("🔍 === CREATE MÉDICO ===")
-        print(f"🔍 User: {request.user}")
-        print(f"🔍 Authenticated: {request.user.is_authenticated}")
-        print(f"🔍 Data: {request.data}")
+
         
         try:
             return super().create(request, *args, **kwargs)
         except Exception as e:
-            print(f"❌ Error en create: {e}")
+      
             import traceback
             traceback.print_exc()
             return Response(
@@ -95,7 +94,7 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         # Asignar automáticamente el grupo del usuario que crea
         try:
             usuario = Usuario.objects.get(correo=self.request.user.email)
-            print(f"🔍 Usuario creador: {usuario}, Grupo: {usuario.grupo}")
+       
             
             # ASIGNAR ROL MÉDICO AUTOMÁTICAMENTE
             try:
@@ -111,8 +110,7 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
                         descripcion='Médico del sistema'
                     )
             
-            print(f"🔍 Rol asignado: {rol_medico.nombre} (ID: {rol_medico.id})")
-            
+              
             # OBTENER Y HASHEAR LA CONTRASEÑA
             validated_data = serializer.validated_data
             password = validated_data.get('password')
@@ -120,7 +118,7 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             if password:
                 from django.contrib.auth.hashers import make_password
                 validated_data['password'] = make_password(password)
-                print("🔍 Contraseña hasheada")
+    
             
             # Crear también el User de Django
             correo = validated_data.get('correo')
@@ -131,7 +129,6 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
                         email=correo,
                         password=password  # Django ya la hashea automáticamente
                     )
-                    print("🔍 User de Django creado")
                 except Exception as e:
                     print(f"⚠️ Error creando User Django: {e}")
             
@@ -146,10 +143,10 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
                 objeto=f"Médico: {medico.nombre} (id:{medico.id})",
                 usuario=actor
             )
-            print(f"✅ Médico creado: {medico}")
+
             
         except Usuario.DoesNotExist:
-            print("❌ Usuario no encontrado")
+
             # Fallback con rol médico
             grupo = Grupo.objects.first()
             try:
@@ -165,7 +162,7 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
                 validated_data['password'] = make_password(password)
                 
             medico = serializer.save(grupo=grupo, rol=rol_medico)
-            print(f"✅ Médico creado con grupo fallback y rol médico")
+    
 
     def perform_update(self, serializer):
         medico = serializer.save()
@@ -232,7 +229,145 @@ class TipoAtencionViewSet(MultiTenantMixin, viewsets.ModelViewSet):
 class BloqueHorarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Bloque_Horario.objects.all()
     serializer_class = BloqueHorarioSerializer
-    
+
+    def get_user_medico(self):
+        """Devuelve el médico asociado al usuario logueado o None"""
+        try:
+            usuario = Usuario.objects.get(correo=self.request.user.email)
+            return getattr(usuario, 'medico', None)
+        except Usuario.DoesNotExist:
+            return None
+
+
     def get_queryset(self):
-        queryset = Bloque_Horario.objects.all()
-        return self.filter_by_grupo(queryset)
+        queryset = super().get_queryset()
+        queryset = self.filter_by_grupo(queryset)
+
+        # Filtrar por médico logueado
+        medico = self.get_user_medico()
+        if medico:
+            queryset = queryset.filter(medico=medico)
+
+        if self.action == 'list':
+            queryset = queryset.filter(estado=True)
+
+        return queryset.order_by('dia_semana', 'hora_inicio')
+
+    def create(self, request, *args, **kwargs):
+        """Override create para asignar grupo automáticamente"""
+        data = request.data.copy()
+
+        try:
+            usuario = Usuario.objects.get(correo=request.user.email)
+            data['grupo'] = usuario.grupo.id
+
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+        except Usuario.DoesNotExist:
+            return Response(
+                {"error": "Usuario no válido"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except ValidationError as e:
+            return Response(
+                {"error": "Error de validación", "detalles": e.message_dict},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def perform_create(self, serializer):
+        """Asignar grupo automáticamente y guardar"""
+        try:
+            usuario = Usuario.objects.get(correo=self.request.user.email)
+            bloque = serializer.save(grupo=usuario.grupo)
+            bloque.full_clean()  # Ejecuta clean() y validaciones del modelo
+
+            # Log
+            actor = get_actor_usuario_from_request(self.request)
+            log_action(
+                request=self.request,
+                accion=f"Creó bloque horario: {bloque.dia_semana} {bloque.hora_inicio}-{bloque.hora_fin}",
+                objeto=f"Bloque Horario: {bloque}",
+                usuario=actor
+            )
+        except Usuario.DoesNotExist:
+            grupo = Grupo.objects.first()
+            bloque = serializer.save(grupo=grupo)
+            bloque.full_clean()
+
+    def perform_update(self, serializer):
+        """Logging en actualizaciones"""
+        bloque_actualizado = serializer.save()
+        bloque_actualizado.full_clean()
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Actualizó bloque horario: {bloque_actualizado.dia_semana} {bloque_actualizado.hora_inicio}-{bloque_actualizado.hora_fin}",
+            objeto=f"Bloque Horario: {bloque_actualizado}",
+            usuario=actor
+        )
+
+    def perform_destroy(self, instance):
+        """Soft delete con logging"""
+        nombre_bloque = str(instance)
+        instance.estado = False
+        instance.save()
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Eliminó bloque horario: {nombre_bloque}",
+            objeto=f"Bloque Horario: {nombre_bloque}",
+            usuario=actor
+        )
+
+    # ENDPOINT PERSONALIZADO: bloques del médico logueado
+    @action(detail=False, methods=['get'])
+    def por_medico(self, request):
+        medico = self.get_user_medico()
+        if not medico:
+            return Response(
+                {"error": "Usuario no es médico o no tiene asociado un médico"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        bloques = self.get_queryset().filter(medico=medico)
+        serializer = self.get_serializer(bloques, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def verificar_disponibilidad(self, request):
+        """Verificar disponibilidad de un horario"""
+        bloque_id = request.query_params.get('bloque_id')
+        fecha = request.query_params.get('fecha')
+        hora_inicio = request.query_params.get('hora_inicio')
+        hora_fin = request.query_params.get('hora_fin')
+
+        if not all([bloque_id, fecha, hora_inicio, hora_fin]):
+            return Response(
+                {"error": "Se requieren parámetros: bloque_id, fecha, hora_inicio, hora_fin"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            bloque = Bloque_Horario.objects.get(id=bloque_id)
+            citas_existentes = Cita_Medica.objects.filter(
+                bloque_horario=bloque,
+                fecha=fecha,
+                estado=True
+            ).filter(
+                Q(hora_inicio__lt=hora_fin, hora_fin__gt=hora_inicio)
+            )
+            disponible = not citas_existentes.exists()
+            return Response({
+                "disponible": disponible,
+                "citas_existentes": citas_existentes.count()
+            })
+        except Bloque_Horario.DoesNotExist:
+            return Response({"error": "Bloque horario no encontrado"}, status=status.HTTP_404_NOT_FOUND)

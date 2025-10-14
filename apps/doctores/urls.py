@@ -6,8 +6,8 @@ from . import views
 router = DefaultRouter()
 router.register(r'medicos', views.MedicoViewSet)
 router.register(r'especialidades', views.EspecialidadViewSet)
-router.register(r'tipo-atencion', views.TipoAtencionViewSet)
-router.register(r'bloque-horario', views.BloqueHorarioViewSet)
+router.register(r'tipos-atencion', views.TipoAtencionViewSet)
+router.register(r'bloques-horario', views.BloqueHorarioViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
