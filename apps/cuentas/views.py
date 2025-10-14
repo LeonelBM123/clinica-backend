@@ -187,7 +187,7 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Usuario.objects.all()
         
-        # Filtrar por rol si se proporciona en query params
+        # Filtrar por rol si se proporciona en query params--cambios hehco por alejandro 
         rol_nombre = self.request.query_params.get('rol', None)
         if rol_nombre:
             queryset = queryset.filter(rol__nombre=rol_nombre)
