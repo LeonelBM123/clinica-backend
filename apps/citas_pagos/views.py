@@ -1,104 +1,230 @@
-def get_dia_semana_es(fecha):
-    dias_map = {
-        'MONDAY': 'LUNES',
-        'TUESDAY': 'MARTES',
-        'WEDNESDAY': 'MIERCOLES',
-        'THURSDAY': 'JUEVES',
-        'FRIDAY': 'VIERNES',
-        'SATURDAY': 'SABADO',
-        'SUNDAY': 'DOMINGO',
-    }
-    import datetime
-    dia_en = datetime.datetime.strptime(fecha, '%Y-%m-%d').strftime('%A').upper()
-    return dias_map.get(dia_en)
-from datetime import datetime
+from datetime import datetime, timedelta
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view
+from apps.cuentas.utils import get_actor_usuario_from_request, log_action
+from apps.cuentas.models import Usuario, Grupo
+from apps.doctores.models import Medico
 from rest_framework.response import Response
 from rest_framework import generics
 from rest_framework import permissions
 from .models import *
 from .serializers import *
-class CitaMedicaViewSet(viewsets.ModelViewSet):
+from django.db.models import Q
 
-    def get_dia_semana_es(fecha):
-        dias_map = {
-        'MONDAY': 'LUNES',
-        'TUESDAY': 'MARTES',
-        'WEDNESDAY': 'MIERCOLES',
-        'THURSDAY': 'JUEVES',
-        'FRIDAY': 'VIERNES',
-        'SATURDAY': 'SABADO',
-        'SUNDAY': 'DOMINGO',
-        }
-        dia_en = datetime.strptime(fecha, '%Y-%m-%d').strftime('%A').upper()
-        return dias_map.get(dia_en)
-
-    queryset = Cita_Medica.objects.all()
-    serializer_class = CitaMedicaSerializer
-
-    def create(self, request, *args, **kwargs):
-        data = request.data
-        bloque_id = data.get('bloque_horario')
-        fecha = data.get('fecha')
-        hora_inicio = data.get('hora_inicio')
-        hora_fin = data.get('hora_fin')
-
-        # Validar bloque horario
-        try:
-            bloque = Bloque_Horario.objects.get(id=bloque_id)
-        except Bloque_Horario.DoesNotExist:
-            return Response({'error': 'Bloque horario no existe.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Validar día de la semana (simplificado)
-        dia_es = get_dia_semana_es(fecha)
-        if bloque.dia_semana != dia_es:
-            return Response({'error': f'La fecha corresponde a {dia_es}, pero el bloque es para {bloque.dia_semana}.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Validar rango de hora
-        if not (str(bloque.hora_inicio) <= hora_inicio < str(bloque.hora_fin) and str(bloque.hora_inicio) < hora_fin <= str(bloque.hora_fin)):
-            return Response({'error': 'La hora de la cita está fuera del rango del bloque horario.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Validar disponibilidad (no solapamiento)
-        citas_existentes = Cita_Medica.objects.filter(
-            bloque_horario=bloque,
-            fecha=fecha,
-            hora_inicio__lt=hora_fin,
-            hora_fin__gt=hora_inicio
-        )
-        if citas_existentes.exists():
-            return Response({'error': 'El médico ya tiene una cita en ese horario.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        return super().create(request, *args, **kwargs)
+class MultiTenantMixin:
+    """Mixin para filtrar datos por grupo del usuario actual"""
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_user_grupo(self):
+        """Obtiene el grupo del usuario actual"""
+        if hasattr(self.request, 'user') and self.request.user.is_authenticated:
+            try:
+                usuario = Usuario.objects.get(correo=self.request.user.email)
+                return usuario.grupo
+            except Usuario.DoesNotExist:
+                pass
+        return None
+    
+    def get_user_medico(self):
+        """Obtiene el médico asociado al usuario actual"""
+        if hasattr(self.request, 'user') and self.request.user.is_authenticated:
+            try:
+                # Buscar médico por email
+                medico = Medico.objects.get(correo=self.request.user.email)
+                return medico
+            except Medico.DoesNotExist:
+                pass
+        return None
+    
+    def is_super_admin(self):
+        """Verifica si el usuario actual es super admin"""
+        grupo = self.get_user_grupo()
+        # Aquí tu lógica para super admin...
+        return False
+    
+    def filter_by_grupo(self, queryset):
+        """Filtra el queryset por el grupo del usuario actual"""
+        grupo = self.get_user_grupo()
+        if grupo:
+            model = queryset.model
+            has_grupo_field = any(
+                hasattr(field, 'name') and field.name == 'grupo' 
+                for field in model._meta.get_fields()
+            )
+            
+            if has_grupo_field:
+               
+                return queryset.filter(grupo=grupo)
         
+      
+        return queryset
+
+class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
+    """
+    Gestiona el CRUD completo y las acciones personalizadas para las Citas Médicas.
+    """
+    # Usamos select_related para optimizar las consultas a la base de datos
+    queryset = Cita_Medica.objects.all().select_related('paciente', 'bloque_horario__medico', 'grupo')
+    serializer_class = CitaMedicaSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
     def get_queryset(self):
-        # Por defecto, solo pacientes cuyo usuario está activo
-        if self.action == 'list':
-            return Cita_Medica.objects.filter(estado=True)
-        return Cita_Medica.objects.all()
+        """
+        Filtra las citas de forma inteligente según el rol del usuario:
+        - Si es Médico, solo ve sus propias citas.
+        - Si es otro rol (Admin/Recepcionista), ve todas las citas de su grupo.
+        """
+        # Obtenemos el queryset base ya optimizado
+        queryset = super().get_queryset()
+        
+        # Filtramos por el grupo del usuario (lógica del MultiTenantMixin)
+        queryset = self.filter_by_grupo(queryset)
+        
+        # Si el usuario es un médico, aplicamos un filtro adicional
+        medico = self.get_user_medico()
+        if medico:
+            queryset = queryset.filter(bloque_horario__medico=medico)
+        
+        return queryset.order_by('-fecha', '-hora_inicio')
+
+    def perform_create(self, serializer):
+        """
+        Asigna datos automáticos (hora_fin, grupo) al crear una cita y registra el log.
+        """
+        bloque = serializer.validated_data.get('bloque_horario')
+        hora_inicio = serializer.validated_data.get('hora_inicio')
+
+        # Cálculo automático de la hora de fin
+        hora_inicio_dt = datetime.combine(datetime.today(), hora_inicio)
+        duracion = timedelta(minutes=bloque.duracion_cita_minutos)
+        hora_fin = (hora_inicio_dt + duracion).time()
+        
+        # Guardamos la cita asignando los datos calculados y el grupo del bloque
+        cita = serializer.save(grupo=bloque.grupo, hora_fin=hora_fin)
+        
+        # --- Log de Acción ---
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Creó cita para {cita.paciente.nombre} el {cita.fecha} a las {cita.hora_inicio.strftime('%H:%M')}",
+            objeto=f"Cita ID: {cita.id}",
+            usuario=actor
+        )
+
+    def perform_update(self, serializer):
+        """
+        Registra el log al actualizar una cita.
+        """
+        cita_actualizada = serializer.save()
+        
+        # --- Log de Acción ---
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Actualizó la cita ID: {cita_actualizada.id} para el paciente {cita_actualizada.paciente.nombre}",
+            objeto=f"Cita ID: {cita_actualizada.id}",
+            usuario=actor
+        )
 
     def perform_destroy(self, instance):
-        # Soft delete: cambia estado del usuario a False
-        instance.cita.estado = False
-        instance.cita.save()
+        """
+        Realiza un "soft delete" (desactivación) de la cita y registra el log.
+        """
+        cita_info = f"ID: {instance.id} - Paciente: {instance.paciente.nombre}"
+        
+        instance.estado = False
+        # Es buena práctica cambiar el estado a 'CANCELADA' al eliminar lógicamente
+        if instance.estado_cita not in ['COMPLETADA', 'CANCELADA']:
+            instance.estado_cita = 'CANCELADA'
+            instance.motivo_cancelacion = "Cancelada por personal administrativo."
+        instance.save()
+        
+        # --- Log de Acción ---
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Canceló (soft delete) la cita: {cita_info}",
+            objeto=f"Cita ID: {instance.id}",
+            usuario=actor
+        )
+
+    # --- ACCIONES PERSONALIZADAS ---
+
+    @action(detail=True, methods=['post'], url_path='cambiar-estado')
+    def cambiar_estado(self, request, pk=None):
+        """
+        Permite cambiar el estado de una cita específica (ej: PENDIENTE -> CONFIRMADA).
+        """
+        cita = self.get_object()
+        nuevo_estado = request.data.get('estado_cita')
+        
+        if not nuevo_estado or nuevo_estado not in dict(Cita_Medica.ESTADOS_CITA):
+            return Response({"error": "Debe proporcionar un estado válido."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        estado_anterior = cita.estado_cita
+        cita.estado_cita = nuevo_estado
+        
+        if nuevo_estado == 'CANCELADA':
+            cita.motivo_cancelacion = request.data.get('motivo_cancelacion', 'Sin motivo especificado.')
+            
+        cita.save()
+
+        # --- Log de Acción ---
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Cambió estado de cita ID {cita.id} de '{estado_anterior}' a '{nuevo_estado}'",
+            objeto=f"Cita ID: {cita.id}",
+            usuario=actor
+        )
+        
+        serializer = self.get_serializer(cita)
+        return Response(serializer.data)
 
     @action(detail=False, methods=['get'])
     def eliminadas(self, request):
-        # Pacientes cuyo usuario está inactivo
-        eliminadas = Cita_Medica.objects.filter(estado=False)
-        serializer = self.get_serializer(eliminadas, many=True)
+        """
+        Devuelve una lista de las citas que han sido desactivadas (soft delete).
+        """
+        # El queryset ya está filtrado por grupo/médico gracias a get_queryset
+        queryset = self.get_queryset().filter(estado=False)
+        serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
-    
+
     @action(detail=True, methods=['post'])
     def restaurar(self, request, pk=None):
+        """
+        Restaura una cita que fue desactivada.
+        """
         cita = self.get_object()
         cita.estado = True
+        cita.estado_cita = 'CONFIRMADA' # Se restaura a un estado activo
         cita.save()
+
+        # --- Log de Acción ---
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Restauró la cita ID: {cita.id}",
+            objeto=f"Cita ID: {cita.id}",
+            usuario=actor
+        )
+        
         serializer = self.get_serializer(cita)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+        serializer = CitaMedicaDetalleSerializer(cita)
+        return Response(serializer.data)
+    @action(detail=False, methods=['get'], url_path='estados-disponibles')
+    def estados_disponibles(self, request):
+        """
+        Devuelve un diccionario con los posibles estados de una cita y sus nombres.
+        """
+        return Response(dict(Cita_Medica.ESTADOS_CITA))
 
+"""""
 # apps/citas_pagos/views.py
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -139,6 +265,6 @@ class CitaDetalleView(APIView):
             cita = Cita_Medica.objects.get(id=cita_id, grupo=grupo)
         except Cita_Medica.DoesNotExist:
             return Response({"error": "Cita no encontrada."}, status=404)
-
         serializer = CitaMedicaDetalleSerializer(cita)
         return Response(serializer.data)
+"""
