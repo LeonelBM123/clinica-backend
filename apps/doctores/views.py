@@ -12,6 +12,8 @@ from .models import *
 from .serializers import *
 from .permissions import CanEditOrDeleteBloqueHorario
 from django.contrib.auth.models import User
+from datetime import datetime, timedelta
+from rest_framework.exceptions import ValidationError
 
 class MultiTenantMixin:
     """Mixin para filtrar datos por grupo del usuario actual"""
@@ -359,6 +361,38 @@ class BloqueHorarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             objeto=f"Bloque_Horario: {bloque.id}",
             usuario=actor
         )
+
+    @action(detail=False, methods=['get'], url_path='medico/(?P<medico_id>[^/.]+)')
+    def bloques_por_medico(self, request, medico_id=None):
+        """
+        Obtiene todos los bloques horarios de un médico específico.
+        Uso: GET /api/doctores/bloques-horarios/medico/{medico_id}/
+        """
+        try:
+            medico = Medico.objects.get(id=medico_id, estado=True)
+        except Medico.DoesNotExist:
+            return Response({'error': 'Médico no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Verificar que el paciente pueda ver médicos de su clínica
+        usuario_actual = None
+        try:
+            usuario_actual = Usuario.objects.get(correo=self.request.user.email)
+        except Usuario.DoesNotExist:
+            pass
+        
+        # Si el usuario es paciente, verificar que el médico sea de su misma clínica
+        if usuario_actual and usuario_actual.rol and usuario_actual.rol.nombre == 'paciente':
+            if medico.grupo != usuario_actual.grupo:
+                return Response({'error': 'No tiene permisos para ver este médico'}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Filtrar bloques activos del médico
+        bloques = Bloque_Horario.objects.filter(
+            medico=medico, 
+            estado=True
+        ).select_related('medico', 'tipo_atencion')
+        
+        serializer = BloqueHorarioSerializer(bloques, many=True)
+        return Response(serializer.data)
 
     def perform_destroy(self, instance):
         """
