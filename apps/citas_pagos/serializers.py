@@ -11,11 +11,12 @@ class HorarioDisponibleSerializer(serializers.Serializer):
     hora_inicio = serializers.TimeField(format='%H:%M')
 
 class CitaMedicaSerializer(serializers.ModelSerializer):
-    paciente_nombre = serializers.CharField(source='paciente.nombre', read_only=True)
+    paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
     medico_nombre = serializers.CharField(source='bloque_horario.medico.nombre', read_only=True)
     
     paciente = serializers.PrimaryKeyRelatedField(
-        queryset=Paciente.objects.filter(usuario__estado=True)
+        queryset=Paciente.objects.filter(usuario__estado=True),
+        required=False  # Hacemos el campo opcional
     )
     bloque_horario = serializers.PrimaryKeyRelatedField(
         queryset=Bloque_Horario.objects.filter(estado=True)
@@ -29,7 +30,7 @@ class CitaMedicaSerializer(serializers.ModelSerializer):
             'grupo', 'motivo_cancelacion', 'calificacion', 'comentario_calificacion',
             'fecha_creacion', 'fecha_modificacion'
         ]
-        read_only_fields = ['hora_fin', 'grupo', 'paciente_nombre', 'medico_nombre']
+        read_only_fields = ['grupo', 'paciente_nombre', 'medico_nombre']
 
     def validate(self, data):
         bloque = data.get('bloque_horario')
@@ -37,7 +38,8 @@ class CitaMedicaSerializer(serializers.ModelSerializer):
         hora_inicio = data.get('hora_inicio')
         paciente = data.get('paciente')
         
-        if paciente.grupo != bloque.grupo:
+        # 1. Validación de Grupo (solo si se proporciona paciente)
+        if paciente and paciente.usuario.grupo != bloque.grupo:
             raise serializers.ValidationError("El paciente y el médico no pertenecen a la misma clínica/grupo.")
 
         DIAS_SEMANA_MAP = {0: 'LUNES', 1: 'MARTES', 2: 'MIÉRCOLES', 3: 'JUEVES', 4: 'VIERNES', 5: 'SÁBADO', 6: 'DOMINGO'}
@@ -68,9 +70,12 @@ class CitaMedicaSerializer(serializers.ModelSerializer):
             (hora_inicio.hour - bloque.hora_inicio.hour) * 60 +
             (hora_inicio.minute - bloque.hora_inicio.minute)
         )
+        
         if minutos_desde_inicio < 0 or minutos_desde_inicio % bloque.duracion_cita_minutos != 0:
             raise serializers.ValidationError(
-                f"La hora de inicio {hora_inicio.strftime('%H:%M')} no es un intervalo válido para este bloque."
+                f"La hora de inicio {hora_inicio.strftime('%H:%M')} no es un intervalo válido para este bloque. "
+                f"El bloque inicia a las {bloque.hora_inicio.strftime('%H:%M')} "
+                f"con intervalos de {bloque.duracion_cita_minutos} minutos."
             )
 
         return data

@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view
+from rest_framework.exceptions import ValidationError
 from apps.cuentas.utils import get_actor_usuario_from_request, log_action
 from apps.cuentas.models import Usuario, Grupo
 from apps.doctores.models import Medico
@@ -44,6 +45,23 @@ class MultiTenantMixin:
         # Aquí tu lógica para super admin...
         return False
     
+    def get_user_paciente(self):
+        """Obtiene el paciente asociado al usuario actual"""
+        if hasattr(self.request, 'user') and self.request.user.is_authenticated:
+            try:
+                from apps.historiasDiagnosticos.models import Paciente
+                from apps.cuentas.models import Usuario
+                
+                # Obtener el usuario actual
+                usuario = Usuario.objects.get(correo=self.request.user.email)
+                
+                # Obtener el paciente asociado a este usuario
+                paciente = Paciente.objects.get(usuario=usuario)
+                return paciente
+            except (Usuario.DoesNotExist, Paciente.DoesNotExist):
+                pass
+        return None
+
     def filter_by_grupo(self, queryset):
         """Filtra el queryset por el grupo del usuario actual"""
         grupo = self.get_user_grupo()
@@ -91,28 +109,48 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """
-        Asigna datos automáticos (hora_fin, grupo) al crear una cita y registra el log.
+        Asigna datos automáticos (grupo y paciente) al crear una cita y registra el log.
         """
         bloque = serializer.validated_data.get('bloque_horario')
-        hora_inicio = serializer.validated_data.get('hora_inicio')
-
-        # Cálculo automático de la hora de fin
-        hora_inicio_dt = datetime.combine(datetime.today(), hora_inicio)
-        duracion = timedelta(minutes=bloque.duracion_cita_minutos)
-        hora_fin = (hora_inicio_dt + duracion).time()
+        paciente = self.get_user_paciente()
         
-        # Guardamos la cita asignando los datos calculados y el grupo del bloque
-        cita = serializer.save(grupo=bloque.grupo, hora_fin=hora_fin)
+        if not paciente:
+            raise ValidationError('No se encontró un paciente asociado a este usuario')
+        
+        # Validar que el paciente y el médico pertenezcan al mismo grupo
+        if paciente.usuario.grupo != bloque.grupo:
+            raise ValidationError('El paciente y el médico no pertenecen a la misma clínica/grupo.')
+        
+        # Guardamos la cita asignando el grupo del bloque y el paciente del usuario
+        cita = serializer.save(grupo=bloque.grupo, paciente=paciente)
         
         # --- Log de Acción ---
         actor = get_actor_usuario_from_request(self.request)
         log_action(
             request=self.request,
-            accion=f"Creó cita para {cita.paciente.nombre} el {cita.fecha} a las {cita.hora_inicio.strftime('%H:%M')}",
+            accion=f"Creó cita para {cita.paciente.usuario.nombre} el {cita.fecha} a las {cita.hora_inicio.strftime('%H:%M')}",
             objeto=f"Cita ID: {cita.id}",
             usuario=actor
         )
 
+    
+    @action(detail=False, methods=['get'], url_path='paciente/(?P<paciente_id>[^/.]+)')
+    def citas_por_paciente(self, request, paciente_id=None):
+        """
+        Obtiene todas las citas médicas asociadas a un paciente específico.
+        """
+        try:
+            # Filtramos las citas por el ID del paciente
+            citas = self.get_queryset().filter(paciente_id=paciente_id)
+            serializer = self.get_serializer(citas, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': f'Error al obtener las citas del paciente: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        
     def perform_update(self, serializer):
         """
         Registra el log al actualizar una cita.
@@ -123,7 +161,7 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         actor = get_actor_usuario_from_request(self.request)
         log_action(
             request=self.request,
-            accion=f"Actualizó la cita ID: {cita_actualizada.id} para el paciente {cita_actualizada.paciente.nombre}",
+            accion=f"Actualizó la cita ID: {cita_actualizada.id} para el paciente {cita_actualizada.paciente.usuario.nombre}",
             objeto=f"Cita ID: {cita_actualizada.id}",
             usuario=actor
         )
@@ -132,7 +170,7 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         """
         Realiza un "soft delete" (desactivación) de la cita y registra el log.
         """
-        cita_info = f"ID: {instance.id} - Paciente: {instance.paciente.nombre}"
+        cita_info = f"ID: {instance.id} - Paciente: {instance.paciente.usuario.nombre}"
         
         instance.estado = False
         # Es buena práctica cambiar el estado a 'CANCELADA' al eliminar lógicamente
@@ -224,3 +262,16 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         """
         return Response(dict(Cita_Medica.ESTADOS_CITA))
 
+    @action(detail=False, methods=['get'], url_path='mi-paciente-id')
+    def mi_paciente_id(self, request):
+        """
+        Devuelve el ID del paciente asociado al usuario actual.
+        """
+        paciente = self.get_user_paciente()
+        if paciente:
+            return Response({'paciente_id': paciente.id})
+        else:
+            return Response({'error': 'No se encontró un paciente asociado a este usuario'}, 
+                    status=status.HTTP_404_NOT_FOUND)
+
+    

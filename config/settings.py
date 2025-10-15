@@ -61,6 +61,7 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "http://localhost:3000",
     "https://clincavisionex.netlify.app"
 ]
 
@@ -110,6 +111,7 @@ DATABASES = {
          'PORT': '5432',  # El puerto estándar
          'OPTIONS': {
              'sslmode': 'require',
+             'options': 'endpoint=ep-cool-glade-ac6kkkjf',
          }
      }
 }
