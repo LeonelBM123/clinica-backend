@@ -133,6 +133,24 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             usuario=actor
         )
 
+    
+    @action(detail=False, methods=['get'], url_path='paciente/(?P<paciente_id>[^/.]+)')
+    def citas_por_paciente(self, request, paciente_id=None):
+        """
+        Obtiene todas las citas médicas asociadas a un paciente específico.
+        """
+        try:
+            # Filtramos las citas por el ID del paciente
+            citas = self.get_queryset().filter(paciente_id=paciente_id)
+            serializer = self.get_serializer(citas, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response(
+                {'error': f'Error al obtener las citas del paciente: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        
     def perform_update(self, serializer):
         """
         Registra el log al actualizar una cita.
@@ -252,6 +270,6 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             return Response({'paciente_id': paciente.id})
         else:
             return Response({'error': 'No se encontró un paciente asociado a este usuario'}, 
-                          status=status.HTTP_404_NOT_FOUND)
+                    status=status.HTTP_404_NOT_FOUND)
 
     
