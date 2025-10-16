@@ -65,6 +65,12 @@ class EspecialidadViewSet(viewsets.ModelViewSet):
     queryset = Especialidad.objects.all()
     serializer_class = EspecialidadSerializer
 
+class HorarioDisponibleV2Serializer(serializers.Serializer):
+    bloque_horario_id = serializers.IntegerField()
+    hora_inicio = serializers.TimeField(format='%H:%M')
+    tipo_atencion_nombre = serializers.CharField()
+    duracion_minutos = serializers.IntegerField()
+
 class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):  
     queryset = Medico.objects.all()
     serializer_class = MedicoSerializer
@@ -274,7 +280,67 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         
         serializer = HorarioDisponibleSerializer(horarios_disponibles, many=True)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['get'], url_path='horarios-disponibles-v2')
+    def horarios_disponibles_v2(self, request, pk=None):
+        """
+        (V2) Calcula y devuelve los horarios disponibles con información adicional.
+        Uso: GET /api/doctores/medicos/{id}/horarios-disponibles-v2/?fecha=YYYY-MM-DD
+        """
+        # 1. Obtener médico y validar la fecha
+        medico = self.get_object()
+        fecha_str = request.query_params.get('fecha')
 
+        if not fecha_str:
+            return Response({'error': 'El parámetro "fecha" es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            fecha = datetime.strptime(fecha_str, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Formato de fecha inválido. Use AAAA-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Obtener bloques del día optimizando la consulta para 'tipo_atencion'
+        DIAS_SEMANA_MAP = {0: 'LUNES', 1: 'MARTES', 2: 'MIERCOLES', 3: 'JUEVES', 4: 'VIERNES', 5: 'SABADO', 6: 'DOMINGO'}
+        dia_semana_str = DIAS_SEMANA_MAP.get(fecha.weekday())
+
+        bloques_del_dia = Bloque_Horario.objects.filter(
+            medico=medico,
+            dia_semana=dia_semana_str,
+            estado=True
+        ).select_related('tipo_atencion').order_by('hora_inicio')
+
+        if not bloques_del_dia.exists():
+            return Response([], status=status.HTTP_200_OK)
+
+        # --- 3. Obtener horas ocupadas de forma eficiente (CON LA CORRECCIÓN) ---
+        citas_ocupadas = Cita_Medica.objects.filter(
+            bloque_horario__medico=medico,  # ✅ LÍNEA CORREGIDA
+            fecha=fecha,
+            estado_cita__in=['PENDIENTE', 'CONFIRMADA', 'EN_PROCESO']
+        ).values_list('hora_inicio', flat=True)
+        
+        horas_ocupadas_set = set(citas_ocupadas)
+
+        # 4. Generar horarios disponibles con datos enriquecidos
+        horarios_disponibles = []
+        for bloque in bloques_del_dia:
+            hora_actual = datetime.combine(fecha, bloque.hora_inicio)
+            hora_fin = datetime.combine(fecha, bloque.hora_fin)
+            intervalo = timedelta(minutes=bloque.duracion_cita_minutos)
+            
+            while hora_actual < hora_fin:
+                if hora_actual.time() not in horas_ocupadas_set:
+                    horarios_disponibles.append({
+                        'bloque_horario_id': bloque.id,
+                        'hora_inicio': hora_actual.time(),
+                        'tipo_atencion_nombre': bloque.tipo_atencion.nombre if bloque.tipo_atencion else "Consulta",
+                        'duracion_minutos': bloque.duracion_cita_minutos
+                    })
+                
+                hora_actual += intervalo
+
+        # 5. Usar el serializer V2 para la respuesta
+        serializer = HorarioDisponibleV2Serializer(horarios_disponibles, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 class TipoAtencionViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     queryset = Tipo_Atencion.objects.all()
