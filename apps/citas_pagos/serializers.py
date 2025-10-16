@@ -5,6 +5,8 @@ from apps.historiasDiagnosticos.models import Paciente
 from apps.cuentas.models import Grupo
 from apps.doctores.models import Medico
 from django.db.models import Q
+from apps.doctores.serializers import MedicoResumenSerializer
+
 
 class HorarioDisponibleSerializer(serializers.Serializer):
     bloque_horario_id = serializers.IntegerField()
@@ -81,3 +83,15 @@ class CitaMedicaSerializer(serializers.ModelSerializer):
         return data
 
 
+#para el historial clinico 
+class CitaMedicaDetalleSerializer(serializers.ModelSerializer):
+    paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
+    medico = MedicoResumenSerializer(source='bloque_horario.medico', read_only=True)
+
+    class Meta:
+        model = Cita_Medica
+        fields = [
+            'id', 'fecha', 'hora_inicio', 'hora_fin', 'estado_cita',
+            'notas', 'motivo_cancelacion', 'calificacion', 'comentario_calificacion',
+            'paciente_nombre', 'medico'
+        ]
