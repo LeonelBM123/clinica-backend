@@ -84,7 +84,7 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     Gestiona el CRUD completo y las acciones personalizadas para las Citas Médicas.
     """
     # Usamos select_related para optimizar las consultas a la base de datos
-    queryset = Cita_Medica.objects.all().select_related('paciente__usuario', 'bloque_horario__medico', 'grupo')
+    queryset = Cita_Medica.objects.all().select_related('paciente', 'bloque_horario__medico', 'grupo')
     serializer_class = CitaMedicaSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -109,23 +109,23 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """
-        Asigna datos automáticos y registra el log.
-        Ahora funciona para todos los roles (admins, médicos, etc.).
+        Asigna datos automáticos (grupo y paciente) al crear una cita y registra el log.
         """
-        # --- TOMAMOS LOS DATOS QUE VIENEN DEL FORMULARIO (YA VALIDADOS) ---
         bloque = serializer.validated_data.get('bloque_horario')
-        paciente = serializer.validated_data.get('paciente') 
+        paciente = self.get_user_paciente()
         
-        # Validamos que el paciente y el médico pertenezcan al mismo grupo
-        if paciente.usuario.grupo != bloque.medico.grupo:
+        if not paciente:
+            raise ValidationError('No se encontró un paciente asociado a este usuario')
+        
+        # Validar que el paciente y el médico pertenezcan al mismo grupo
+        if paciente.usuario.grupo != bloque.grupo:
             raise ValidationError('El paciente y el médico no pertenecen a la misma clínica/grupo.')
         
-        # Guardamos la cita. El 'paciente' ya viene validado, 
-        # solo necesitamos asignar el 'grupo' del médico.
-        cita = serializer.save(grupo=bloque.medico.grupo)
+        # Guardamos la cita asignando el grupo del bloque y el paciente del usuario
+        cita = serializer.save(grupo=bloque.grupo, paciente=paciente)
         
         # --- Log de Acción ---
-        actor = get_actor_usuario_from_request(self.request) # Asumo que tienes esta función
+        actor = get_actor_usuario_from_request(self.request)
         log_action(
             request=self.request,
             accion=f"Creó cita para {cita.paciente.usuario.nombre} el {cita.fecha} a las {cita.hora_inicio.strftime('%H:%M')}",
