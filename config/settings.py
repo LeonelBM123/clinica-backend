@@ -61,7 +61,9 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "https://clincavisionex.netlify.app"
+    "https://clincavisionex.netlify.app",
+    "http://localhost:50115", 
+    "http://127.0.0.1:50115",
 ]
 
 # 👇 Permitir todos los headers
