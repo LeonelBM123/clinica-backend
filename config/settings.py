@@ -112,6 +112,7 @@ DATABASES = {
          'PORT': '5432',  # El puerto estándar
          'OPTIONS': {
              'sslmode': 'require',
+             'options': 'endpoint=ep-cool-glade-ac6kkkjf',
          }
      }
 }
