@@ -7,6 +7,9 @@ from .views import CitaMedicaViewSet
 router = DefaultRouter()
 router.register('citas', CitaMedicaViewSet, basename='cita-medica')
 
+
+
 urlpatterns = [
     path('', include(router.urls)),
+    path('create-payment-intent/', views.create_payment_intent, name='create-payment-intent'),
 ]

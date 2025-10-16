@@ -1,3 +1,4 @@
+import stripe
 from datetime import datetime, timedelta
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
@@ -9,10 +10,35 @@ from apps.doctores.models import Medico
 from rest_framework.response import Response
 from rest_framework import generics
 from rest_framework import permissions
+from config import settings
 from .models import *
 from .serializers import *
 from django.db.models import Q
+from apps.historiasDiagnosticos.models import Paciente
 
+stripe.api_key = settings.STRIPE_SECRET_KEY
+@api_view(['POST'])
+def create_payment_intent(request):
+    try:
+        data = request.data
+        amount = data.get('amount')  # en centavos
+        currency = data.get('currency', 'usd')
+
+        if not amount:
+            return Response({"error": "Amount is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Crear el PaymentIntent en Stripe
+        intent = stripe.PaymentIntent.create(
+            amount=amount,
+            currency=currency,
+            automatic_payment_methods={"enabled": True},
+        )
+
+        return Response({
+            "clientSecret": intent.client_secret
+        })
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 class MultiTenantMixin:
     """Mixin para filtrar datos por grupo del usuario actual"""
     
@@ -150,6 +176,36 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+
+    @action(detail=False, methods=['get'], url_path='usuario/(?P<usuario_id>[^/.]+)')
+    def citas_por_usuario(self, request, usuario_id=None): # CORRECCIÓN 2: El método también cambia de nombre.
+        """
+        Obtiene todas las citas médicas de un paciente, buscándolo 
+        a través del ID de su usuario asociado.
+        """
+        try:
+            # PASO 1: Buscar el perfil del paciente usando el 'usuario_id' de la URL.
+            # Usamos get_object_or_404 que es la forma estándar en Django.
+            # Si no encuentra un paciente para ese usuario, devolverá un error 404 Not Found.
+            # NOTA: Asumimos que la relación en tu modelo 'Paciente' se llama 'usuario'.
+            paciente_obj = get_object_or_404(Paciente, usuario_id=usuario_id)
+            
+            # PASO 2: Filtrar las citas usando el objeto 'paciente' que encontramos.
+            # Es más claro y seguro que filtrar por el ID.
+            citas = self.get_queryset().filter(paciente=paciente_obj)
+            
+            serializer = self.get_serializer(citas, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            # Este bloque genérico ahora captura errores inesperados del servidor.
+            return Response(
+                {'error': f'Ocurrió un error inesperado en el servidor: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+
         
     def perform_update(self, serializer):
         """
@@ -274,4 +330,3 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             return Response({'error': 'No se encontró un paciente asociado a este usuario'}, 
                     status=status.HTTP_404_NOT_FOUND)
 
-    
