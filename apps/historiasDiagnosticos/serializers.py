@@ -57,3 +57,12 @@ class PacienteSerializer(serializers.ModelSerializer):
             'fecha_modificacion',
         ]
 
+#para el historial clinico
+class PacienteDetalleSerializer(serializers.ModelSerializer):
+    nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    correo = serializers.CharField(source='usuario.correo', read_only=True)
+    fecha_nacimiento = serializers.DateField(source='usuario.fecha_nacimiento', read_only=True)
+
+    class Meta:
+        model = Paciente
+        fields = ['id', 'nombre', 'correo', 'fecha_nacimiento', 'numero_historia_clinica']

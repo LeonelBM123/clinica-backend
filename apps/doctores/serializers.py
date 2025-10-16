@@ -7,7 +7,9 @@ from .models import *
 from django.db.models import Q
 from apps.cuentas.models import Usuario, Rol
 from apps.citas_pagos.models import Cita_Medica
-from apps.citas_pagos.serializers import HorarioDisponibleSerializer
+#from apps.citas_pagos.serializers import HorarioDisponibleSerializer
+#from apps.doctores.serializers import MedicoSerializer as BaseMedicoSerializer
+
 
 class EspecialidadSerializer(serializers.ModelSerializer):
     class Meta:
@@ -131,3 +133,21 @@ class BloqueHorarioSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Conflicto de horario: El rango de tiempo se solapa con otro bloque existente para este médico.")
 
         return data
+
+#para historial clinico
+class MedicoResumenSerializer(serializers.ModelSerializer):
+    nombre_completo = serializers.CharField(source='usuario.nombre', read_only=True)
+    especialidades = serializers.SlugRelatedField(
+        many=True,
+        read_only=True,
+        slug_field='nombre'  # esto mostrará el nombre de cada especialidad
+    )
+    
+    class Meta:
+        model = MedicoSerializer.Meta.model  # Reusa el modelo Medico
+        fields = [
+            'id',
+            'nombre_completo',
+            'numero_colegiado',
+            'especialidades'
+        ]

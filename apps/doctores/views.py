@@ -7,7 +7,8 @@ from rest_framework import permissions
 from apps.cuentas.utils import get_actor_usuario_from_request, log_action
 from django.db.models import Q
 from apps.citas_pagos.models import Cita_Medica
-from apps.citas_pagos.serializers import HorarioDisponibleSerializer
+#lo coloco coemntado para colocar la importacion directo en la funcion
+#from apps.citas_pagos.serializers import HorarioDisponibleSerializer
 from .models import *
 from .serializers import *
 from .permissions import CanEditOrDeleteBloqueHorario
@@ -228,6 +229,10 @@ class MedicoViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         Calcula y devuelve los slots de tiempo disponibles para un médico en una fecha específica.
         Uso: GET /api/doctores/medicos/{pk}/horarios-disponibles/?fecha=YYYY-MM-DD
         """
+        # 👇 IMPORTACIÓN LOCAL (rompe el ciclo)
+        from apps.citas_pagos.serializers import HorarioDisponibleSerializer
+        
+        
         medico = self.get_object()
         fecha_str = request.query_params.get('fecha')
         

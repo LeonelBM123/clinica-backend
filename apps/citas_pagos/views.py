@@ -309,6 +309,8 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(cita)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+        serializer = CitaMedicaDetalleSerializer(cita)
+        return Response(serializer.data)
     @action(detail=False, methods=['get'], url_path='estados-disponibles')
     def estados_disponibles(self, request):
         """
