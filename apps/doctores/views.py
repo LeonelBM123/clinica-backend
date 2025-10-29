@@ -415,4 +415,3 @@ class BloqueHorarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             objeto=f"Bloque_Horario: {bloque_id}",
             usuario=actor
         )
-
