@@ -36,7 +36,7 @@ class Cita_Medica(models.Model):
         related_name='citas_medicas',
         verbose_name="Grupo al que pertenece",
     )
-    
+    reporte = models.TextField(blank=True, null=True)
     class Meta:
         verbose_name = "Cita Médica"
         verbose_name_plural = "Citas Médicas"
