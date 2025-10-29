@@ -1,27 +1,25 @@
 # en apps/citas/serializers.py
 from rest_framework import serializers
 from .models import *
-from datetime import datetime, timedelta
 from apps.doctores.models import Bloque_Horario
 from apps.historiasDiagnosticos.models import Paciente
 from apps.cuentas.models import Grupo
 from apps.doctores.models import Medico
 from django.db.models import Q
+from apps.doctores.serializers import MedicoResumenSerializer
+
 
 class HorarioDisponibleSerializer(serializers.Serializer):
     bloque_horario_id = serializers.IntegerField()
     hora_inicio = serializers.TimeField(format='%H:%M')
 
 class CitaMedicaSerializer(serializers.ModelSerializer):
-    """
-    Gestiona la validación y serialización completa de las Citas Médicas.
-    """
     paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
     medico_nombre = serializers.CharField(source='bloque_horario.medico.nombre', read_only=True)
-
+    
     paciente = serializers.PrimaryKeyRelatedField(
         queryset=Paciente.objects.filter(usuario__estado=True),
-        required=True # Obligatorio para POST (crear)
+        required=True
     )
     bloque_horario = serializers.PrimaryKeyRelatedField(
         queryset=Bloque_Horario.objects.filter(estado=True),
@@ -99,24 +97,25 @@ class CitaMedicaSerializer(serializers.ModelSerializer):
                  raise serializers.ValidationError({"bloque_horario": "No se pudo determinar el grupo del médico."})
 
 
-        # --- 2. Validación de Día de la Semana ---
-        DIAS_SEMANA_MAP = {0: 'LUNES', 1: 'MARTES', 2: 'MIERCOLES', 3: 'JUEVES', 4: 'VIERNES', 5: 'SABADO', 6: 'DOMINGO'}
+        DIAS_SEMANA_MAP = {0: 'LUNES', 1: 'MARTES', 2: 'MIÉRCOLES', 3: 'JUEVES', 4: 'VIERNES', 5: 'SÁBADO', 6: 'DOMINGO'}
         dia_semana_cita = DIAS_SEMANA_MAP.get(fecha.weekday())
 
         if dia_semana_cita != bloque.dia_semana:
             nombre_dia_bloque = getattr(bloque, 'get_dia_semana_display', lambda: bloque.dia_semana)()
-            raise serializers.ValidationError({
-                "fecha": f"La fecha seleccionada corresponde a un {dia_semana_cita}, pero el bloque horario es para los {nombre_dia_bloque}."
-            })
+            raise serializers.ValidationError(
+                f"La fecha seleccionada corresponde a un {dia_semana_cita}, pero el bloque horario es para los {nombre_dia_bloque}."
+            )
 
         # --- El resto de tus validaciones (sin cambios, ahora son seguras) ---
         citas_en_conflicto = Cita_Medica.objects.filter(
             bloque_horario__medico=bloque.medico,
             fecha=fecha
-        ).exclude(estado_cita__in=['CANCELADA', 'NO_ASISTIO'])
+        ).exclude(estado_cita='CANCELADA')
+        if cita_actual:
+            citas_query = citas_query.exclude(pk=cita_actual.pk)
 
-        if self.instance:
-            citas_en_conflicto = citas_en_conflicto.exclude(pk=self.instance.pk)
+        if citas_query.count() >= bloque.max_citas_por_bloque:
+            raise serializers.ValidationError("El cupo máximo de citas para este bloque y fecha ya ha sido alcanzado.")
 
         if bloque.max_citas_por_bloque is not None and citas_en_conflicto.filter(bloque_horario=bloque).count() >= bloque.max_citas_por_bloque:
             raise serializers.ValidationError({"detail": "El cupo máximo de citas para este bloque y fecha ya ha sido alcanzado."})
@@ -166,13 +165,10 @@ class CitaMedicaSerializer(serializers.ModelSerializer):
 
         return super().create(validated_data)
 
-    def update(self, instance, validated_data):
-        """
-        Calcula `hora_fin` si la hora de inicio o el bloque cambian.
-        """
-        bloque_horario = validated_data.get('bloque_horario', instance.bloque_horario)
-        hora_inicio = validated_data.get('hora_inicio', instance.hora_inicio)
-        fecha_cita = validated_data.get('fecha', instance.fecha)
+#para el historial clinico 
+class CitaMedicaDetalleSerializer(serializers.ModelSerializer):
+    paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
+    medico = MedicoResumenSerializer(source='bloque_horario.medico', read_only=True)
 
         # Recalcular hora_fin solo si los datos relevantes han cambiado
         if 'hora_inicio' in validated_data or 'bloque_horario' in validated_data or 'fecha' in validated_data:

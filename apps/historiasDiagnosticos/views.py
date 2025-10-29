@@ -7,6 +7,10 @@ from .serializers import *
 from apps.cuentas.models import Usuario,Rol
 from apps.cuentas.utils import get_actor_usuario_from_request, log_action
 from django.contrib.auth.models import User
+from apps.citas_pagos.serializers import CitaMedicaDetalleSerializer
+from apps.citas_pagos.models import Cita_Medica
+from .serializers import PacienteDetalleSerializer  # El serializer de solo lectura
+
 
 
 class MultiTenantMixin:
@@ -268,6 +272,20 @@ class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             objeto=f"Paciente: {paciente.usuario.nombre} (id:{paciente.id})",
             usuario=actor
         )
+        
+    #para historial clinico
+    @action(detail=True, methods=['get'])
+    def historial(self, request, pk=None):
+        """Muestra el historial de citas médicas del paciente"""
+        paciente = self.get_object()
+        
+        # Trae todas las citas del paciente
+        citas = Cita_Medica.objects.filter(paciente=paciente).select_related(
+            'bloque_horario__medico__usuario_ptr'
+        )
+        
+        # Serializamos las citas incluyendo datos del médico
+        serializer = CitaMedicaDetalleSerializer(citas, many=True)
+        return Response(serializer.data)
 
 
-            

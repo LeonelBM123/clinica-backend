@@ -1,3 +1,4 @@
+import stripe
 from datetime import datetime, timedelta
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
@@ -10,13 +11,38 @@ from rest_framework.response import Response
 from rest_framework.exceptions import APIException
 from rest_framework import generics
 from rest_framework import permissions
+from config import settings
 from .models import *
 from .serializers import *
 from django.db.models import Q
+from apps.historiasDiagnosticos.models import Paciente
 
 # Importamos la función de nuestro servicio de IA
 from .ia_services import generar_informe_con_ia
 
+stripe.api_key = settings.STRIPE_SECRET_KEY
+@api_view(['POST'])
+def create_payment_intent(request):
+    try:
+        data = request.data
+        amount = data.get('amount')  # en centavos
+        currency = data.get('currency', 'usd')
+
+        if not amount:
+            return Response({"error": "Amount is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Crear el PaymentIntent en Stripe
+        intent = stripe.PaymentIntent.create(
+            amount=amount,
+            currency=currency,
+            automatic_payment_methods={"enabled": True},
+        )
+
+        return Response({
+            "clientSecret": intent.client_secret
+        })
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 class MultiTenantMixin:
     """Mixin para filtrar datos por grupo del usuario actual"""
     permission_classes = [permissions.IsAuthenticated]
@@ -199,6 +225,8 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
              return Response({"detail": "La cita ya está activa."}, status=status.HTTP_400_BAD_REQUEST)
 
 
+        serializer = CitaMedicaDetalleSerializer(cita)
+        return Response(serializer.data)
     @action(detail=False, methods=['get'], url_path='estados-disponibles')
     def estados_disponibles(self, request):
         return Response(dict(Cita_Medica.ESTADOS_CITA))
