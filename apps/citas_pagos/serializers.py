@@ -172,22 +172,13 @@ class CitaMedicaDetalleSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
     medico = MedicoResumenSerializer(source='bloque_horario.medico', read_only=True)
 
-    class Meta:
-        model = Cita_Medica
-        fields = '__all__'
-
     def update(self, instance, validated_data):
-        bloque_horario = validated_data.get('bloque_horario', instance.bloque_horario)
-        hora_inicio = validated_data.get('hora_inicio', instance.hora_inicio)
-        fecha_cita = validated_data.get('fecha', instance.fecha)
-
         # Recalcular hora_fin solo si los datos relevantes han cambiado
         if 'hora_inicio' in validated_data or 'bloque_horario' in validated_data or 'fecha' in validated_data:
-            duracion_minutos = (
-                bloque_horario.duracion_cita_minutos
-                if bloque_horario.duracion_cita_minutos
-                else 30
-            )
+            bloque_horario = validated_data.get('bloque_horario', instance.bloque_horario)
+            hora_inicio = validated_data.get('hora_inicio', instance.hora_inicio)
+            fecha_cita = validated_data.get('fecha', instance.fecha)
+            duracion_minutos = bloque_horario.duracion_cita_minutos if bloque_horario.duracion_cita_minutos else 30
             hora_inicio_dt = datetime.combine(fecha_cita, hora_inicio)
             hora_fin_dt = hora_inicio_dt + timedelta(minutes=duracion_minutos)
             validated_data['hora_fin'] = hora_fin_dt.time()
