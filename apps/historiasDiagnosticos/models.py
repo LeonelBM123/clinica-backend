@@ -1,5 +1,6 @@
 from django.db import models
 from apps.cuentas.models import Usuario, Grupo  # Importar Grupo
+from apps.doctores.models import Medico
 
 class PatologiasO(models.Model):
     
@@ -119,3 +120,45 @@ class Paciente(models.Model):
 
     def __str__(self):
         return f" {self.usuario.nombre} - {self.numero_historia_clinica}"
+
+
+# Modelo para resultados de exámenes
+class ResultadoExamenes(models.Model):
+    ESTADOS_OPCIONES = [
+        ('PENDIENTE', 'Pendiente'),
+        ('REVISADO', 'Revisado'),
+        ('ARCHIVADO', 'Archivado'),   
+    ]
+    TIPO_EXAMEN_CHOICES = [
+        ('Topografía Corneal', 'Topografía Corneal'),
+        ('OCT de Retina', 'OCT de Retina'),
+        ('OCT de Nervio Óptico', 'OCT de Nervio Óptico'),
+        ('Fotografía Segmento Anterior', 'Fotografía Segmento Anterior'),
+        ('Fotografía de Anexos', 'Fotografía de Anexos'),
+        ('Microscopía Especular', 'Microscopía Especular'),
+        ('Otro', 'Otro'),
+    ]    
+    paciente = models.ForeignKey(Paciente, on_delete=models.CASCADE, related_name='resultados_examenes')
+    medico = models.ForeignKey(Medico, on_delete=models.CASCADE, related_name='resultados_examenes')
+    tipo_examen = models.CharField(max_length=120, choices=TIPO_EXAMEN_CHOICES, help_text="Tipo de examen (ej: OCT, fondo de ojo, etc.)")
+    archivo_url = models.CharField(max_length=255, help_text="URL o ruta del archivo", null=True, blank=True)
+    observaciones = models.TextField(blank=True, help_text="Observaciones del médico")
+    estado = models.CharField(max_length=30, choices=ESTADOS_OPCIONES, default='PENDIENTE', help_text="Estado del resultado")
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+    grupo = models.ForeignKey(
+         Grupo, 
+            on_delete=models.CASCADE, 
+            related_name='resultados_examenes',
+            verbose_name="Grupo al que pertenece",
+            help_text="Resultado de examen pertenece a este grupo/clínica",
+            null=True, 
+        blank=True
+        )
+    class Meta:
+        verbose_name = "Resultado de Examen"
+        verbose_name_plural = "Resultados de Exámenes"
+        ordering = ['-fecha_creacion', '-fecha_actualizacion']
+
+    def __str__(self):
+        return f"{self.tipo_examen} - {self.paciente} ({self.fecha_examen})"

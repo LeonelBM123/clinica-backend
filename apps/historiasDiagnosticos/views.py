@@ -2,6 +2,7 @@ from django.shortcuts import render
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
 from .models import *
 from .serializers import *
 from apps.cuentas.models import Usuario,Rol
@@ -287,5 +288,91 @@ class PacienteViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         # Serializamos las citas incluyendo datos del médico
         serializer = CitaMedicaDetalleSerializer(citas, many=True)
         return Response(serializer.data)
+
+class ResultadoExamenesViewSet(MultiTenantMixin, viewsets.ModelViewSet):
+    queryset = ResultadoExamenes.objects.all()
+    serializer_class = ResultadoExamenesSerializer
+    parser_classes = (MultiPartParser, FormParser)
+
+    def get_queryset(self):
+        queryset = ResultadoExamenes.objects.all()
+        # Filtrar por grupo del usuario
+        queryset = self.filter_by_grupo(queryset)
+        return queryset
+
+    def perform_create(self, serializer):
+            import cloudinary.uploader
+            archivo = self.request.FILES.get('archivo')
+            print('DEBUG perform_create: archivo recibido:', archivo)
+            archivo_url = None
+            if archivo:
+                result = cloudinary.uploader.upload(archivo)
+                archivo_url = result.get('secure_url')
+                print('DEBUG perform_create: archivo_url generado:', archivo_url)
+            else:
+                print('DEBUG perform_create: No se recibió archivo')
+            usuario = Usuario.objects.get(correo=self.request.user.email)
+            resultado = serializer.save(grupo=usuario.grupo, archivo_url=archivo_url)
+            print('DEBUG perform_create: resultado.archivo_url guardado:', resultado.archivo_url)
+
+            # Log de la acción
+            actor = get_actor_usuario_from_request(self.request)
+            log_action(
+                request=self.request,
+                accion=f"Creó el resultado de examen {resultado.id}",
+                objeto=f"Resultado de examen: {resultado.id}",
+                usuario=actor
+            )
+
+    def perform_update(self, serializer):
+            import cloudinary.uploader
+            archivo = self.request.FILES.get('archivo')
+            print('DEBUG perform_update: archivo recibido:', archivo)
+            archivo_url = None
+            if archivo:
+                result = cloudinary.uploader.upload(archivo)
+                archivo_url = result.get('secure_url')
+                print('DEBUG perform_update: archivo_url generado:', archivo_url)
+                resultado = serializer.save(archivo_url=archivo_url)
+            else:
+                print('DEBUG perform_update: No se recibió archivo')
+                resultado = serializer.save()
+            print('DEBUG perform_update: resultado.archivo_url guardado:', resultado.archivo_url)
+
+            # Log de la acción
+            actor = get_actor_usuario_from_request(self.request)
+            log_action(
+                request=self.request,
+                accion=f"Actualizó el resultado de examen {resultado.id}",
+                objeto=f"Resultado de examen: {resultado.id}",
+                usuario=actor
+            )
+
+    def perform_destroy(self, instance):
+        import cloudinary.uploader
+        # Eliminar imagen de Cloudinary si existe
+        archivo_url = instance.archivo_url
+        if archivo_url:
+            public_id = None
+            # Extraer public_id de la URL de Cloudinary
+            parts = archivo_url.split('/')
+            if len(parts) > 1:
+                public_id = '/'.join(parts[-2:]).split('.')[0]
+            if public_id:
+                try:
+                    cloudinary.uploader.destroy(public_id)
+                except Exception:
+                    pass
+        pk = instance.pk
+        instance.delete()
+
+        # Log de la acción
+        actor = get_actor_usuario_from_request(self.request)
+        log_action(
+            request=self.request,
+            accion=f"Eliminó (soft delete) el resultado de examen (id:{pk})",
+            objeto=f"Resultado de examen: (id:{pk})",
+            usuario=actor
+        )
 
 

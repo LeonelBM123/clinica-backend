@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import *
-
+from apps.citas_pagos.models import Cita_Medica
 class PatologiasOSerializer(serializers.ModelSerializer):
     grupo_nombre = serializers.CharField(source='grupo.nombre', read_only=True)
     
@@ -66,3 +66,11 @@ class PacienteDetalleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Paciente
         fields = ['id', 'nombre', 'correo', 'fecha_nacimiento', 'numero_historia_clinica']
+        
+class ResultadoExamenesSerializer(serializers.ModelSerializer):
+    paciente_nombre = serializers.CharField(source='paciente.usuario.nombre', read_only=True)
+    medico_nombre = serializers.CharField(source='medico.nombre', read_only=True)
+    class Meta:
+        model = ResultadoExamenes
+        fields = ['id', 'paciente', 'paciente_nombre', 'medico', 'medico_nombre',
+         'tipo_examen', 'archivo_url', 'observaciones', 'estado']
