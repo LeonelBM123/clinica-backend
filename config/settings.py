@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     'apps.doctores',
     'apps.citas_pagos',
     'apps.historiasDiagnosticos',
+    'apps.reportes',
 ]
 
 # Middleware
