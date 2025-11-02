@@ -7,7 +7,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER,TA_LEFT, TA_RIGHT
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from datetime import datetime,time,timedelta,timezone
@@ -41,7 +41,34 @@ except ImportError:
     class Cita_Medica: objects = type('obj', (object,), {'select_related': lambda *a, **k: Cita_Medica.objects, 'all': lambda *a, **k: [], 'filter': lambda *a, **k: [], 'none': lambda *a, **k: []})()
 
 
+try:
+    from .nlp_service import procesar_comando_voz
+except ImportError:
+    print("ADVERTENCIA: No se pudo importar 'nlp_service'.")
+    def procesar_comando_voz(texto):
+        return {"error": "Servicio NLP no cargado."}
+
 FONT_NAME = None 
+def _get_optional_date_range(request):
+    """ayuda a poner un rango de fechas en los reportes si no se dan pone todos
+    """
+    fecha_inicio = None
+    fecha_fin = None
+    try:
+        fecha_inicio_str = request.query_params.get('fecha_inicio', None)
+        fecha_fin_str = request.query_params.get('fecha_fin', None)
+        
+
+        if fecha_inicio_str:
+            fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
+        if fecha_fin_str:
+            fecha_fin = datetime.strptime(fecha_fin_str, '%Y-%m-%d').date()
+            
+    except (ValueError, TypeError):
+        print(f"[WARN] Fechas inválidas recibidas para PDF: {fecha_inicio_str}, {fecha_fin_str}")
+        pass 
+    return fecha_inicio, fecha_fin
+
 
 
 @api_view(['GET']) 
@@ -60,9 +87,16 @@ def generar_reporte_pacientes_pdf(request):
     except Exception as e:
         traceback.print_exc()
         return HttpResponse(f"Error obteniendo perfil de usuario: {e}", status=500)
+    fecha_inicio, fecha_fin = _get_optional_date_range(request)
 #filtrar pacientes por grupo
     try:
         pacientes_qs = Paciente.objects.select_related('usuario', 'usuario__grupo').order_by('usuario__nombre')
+        
+        if fecha_inicio and fecha_fin:
+            
+            pacientes_qs = pacientes_qs.filter(usuario__fecha_registro__date__range=[fecha_inicio, fecha_fin])
+            print(f"[DEBUG] Filtrando PDF de Pacientes por fechas: {fecha_inicio} a {fecha_fin}")
+        
 
         if admin_rol and admin_rol.nombre == 'superAdmin':
             pacientes_filtrados = pacientes_qs.all()
@@ -94,6 +128,11 @@ def generar_reporte_pacientes_pdf(request):
     # Estilo para encabezados de tabla
     header_style = ParagraphStyle('header', parent=normal_center, fontName=(FONT_NAME or 'Helvetica-Bold'))
 
+    normal_left = ParagraphStyle('normal_left', parent=styles['Normal'], 
+                                 alignment=TA_LEFT, fontName=(FONT_NAME or 'Helvetica'))
+    normal_right = ParagraphStyle('normal_right', parent=styles['Normal'], 
+                                  alignment=TA_RIGHT, fontName=(FONT_NAME or 'Helvetica'), fontSize=9)
+   
 
     data = [
         [
@@ -133,7 +172,20 @@ def generar_reporte_pacientes_pdf(request):
         doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=72, bottomMargin=72,title=titulo_reporte)
         elements = []
         
+        fecha_gen=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        elements.append(Paragraph(f"Generado el: {fecha_gen} por {usuario_perfil.nombre}", normal_right))
+        elements.append(Spacer(1, 12))
+
         elements.append(Paragraph(titulo_reporte, title_style))
+        elements.append(Spacer(1, 24))
+
+        total_registros = len(data) - 1 # Restamos la fila de encabezado
+        intro_texto = f"Este reporte detalla <b>{total_registros} paciente(s)</b>"
+        if fecha_inicio and fecha_fin:
+            intro_texto += f" registrado(s) entre las fechas <b>{fecha_inicio}</b> y <b>{fecha_fin}</b>."
+        else:
+            intro_texto += " (histórico completo)."
+        elements.append(Paragraph(intro_texto, normal_left))
         elements.append(Spacer(1, 24))
 
         table = Table(data, colWidths=[120, 150, 180, 80], repeatRows=1)
@@ -188,11 +240,17 @@ def generar_reporte_medicos_pdf(request):
     except Exception as e:
         traceback.print_exc()
         return HttpResponse(f"Error obteniendo perfil de usuario: {e}", status=500)
-
+    fecha_inicio, fecha_fin = _get_optional_date_range(request)
     #filtrar por grupo
     try:
         rol_medico = Rol.objects.get(nombre='medico')
         medicos_qs = Usuario.objects.select_related('grupo', 'rol').filter(rol=rol_medico).order_by('nombre')
+
+        if fecha_inicio and fecha_fin:
+            # El campo de fecha está en el mismo modelo Usuario
+            medicos_qs = medicos_qs.filter(fecha_registro__date__range=[fecha_inicio, fecha_fin])
+            print(f"[DEBUG] Filtrando PDF de Médicos por fechas: {fecha_inicio} a {fecha_fin}")
+        
 
         if admin_rol and admin_rol.nombre == 'superAdmin':
             medicos_filtrados = medicos_qs.all()
@@ -219,6 +277,9 @@ def generar_reporte_medicos_pdf(request):
     title_style = ParagraphStyle('title', parent=styles['Heading1'], alignment=TA_CENTER, fontName=(FONT_NAME or 'Helvetica-Bold'))
     normal_center = ParagraphStyle('normal_center', parent=styles['Normal'], alignment=TA_CENTER, fontName=(FONT_NAME or 'Helvetica'))
     header_style = ParagraphStyle('header', parent=normal_center, fontName=(FONT_NAME or 'Helvetica-Bold'))
+    normal_left = ParagraphStyle('normal_left', parent=styles['Normal'], alignment=TA_LEFT, fontName=(FONT_NAME or 'Helvetica'))
+    normal_right = ParagraphStyle('normal_right', parent=styles['Normal'], alignment=TA_RIGHT, fontName=(FONT_NAME or 'Helvetica'), fontSize=9)
+    
 
     data = [
         [
@@ -259,7 +320,21 @@ def generar_reporte_medicos_pdf(request):
         doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=72, bottomMargin=72,title=titulo_reporte)
         elements = []
         
+        fecha_gen = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        elements.append(Paragraph(f"Generado el: {fecha_gen} por {usuario_perfil.nombre}", normal_right))
+        elements.append(Spacer(1, 12))
         elements.append(Paragraph(titulo_reporte, title_style))
+        elements.append(Spacer(1, 12))
+
+        total_registros = len(data) - 1 # Restamos la fila de encabezado
+        intro_texto = f"Este reporte detalla <b>{total_registros} médico(s)</b>"
+        if fecha_inicio and fecha_fin:
+            intro_texto += f" registrado(s) entre las fechas <b>{fecha_inicio}</b> y <b>{fecha_fin}</b>."
+        else:
+            intro_texto += " (histórico completo)."
+        elements.append(Paragraph(intro_texto, normal_left))
+        elements.append(Spacer(1, 24))
+
         elements.append(Spacer(1, 24))
 
         table = Table(data, colWidths=[180, 180, 80, 80], repeatRows=1)
@@ -315,12 +390,18 @@ def generar_reporte_citas_pdf(request):
     except Exception as e:
         traceback.print_exc()
         return HttpResponse(f"Error obteniendo perfil de usuario: {e}", status=500)
-
+    fecha_inicio, fecha_fin = _get_optional_date_range(request)
     try:
         citas_qs = Cita_Medica.objects.select_related(
             'paciente__usuario',
             'grupo'
         ).order_by('-fecha', '-hora_inicio')
+
+        if fecha_inicio and fecha_fin:
+            # El campo de fecha está en el mismo modelo Cita_Medica
+            citas_qs = citas_qs.filter(fecha__range=[fecha_inicio, fecha_fin])
+            print(f"[DEBUG] Filtrando PDF de Citas por fechas: {fecha_inicio} a {fecha_fin}")
+        
 
         if admin_rol and admin_rol.nombre == 'superAdmin':
             citas_filtradas = citas_qs.all()
@@ -346,7 +427,9 @@ def generar_reporte_citas_pdf(request):
     title_style = ParagraphStyle('title', parent=styles['Heading1'], alignment=TA_CENTER, fontName=(FONT_NAME or 'Helvetica-Bold'))
     normal_center = ParagraphStyle('normal_center', parent=styles['Normal'], alignment=TA_CENTER, fontName=(FONT_NAME or 'Helvetica'))
     header_style = ParagraphStyle('header', parent=normal_center, fontName=(FONT_NAME or 'Helvetica-Bold'))
-
+    normal_left = ParagraphStyle('normal_left', parent=styles['Normal'], alignment=TA_LEFT, fontName=(FONT_NAME or 'Helvetica'))
+    normal_right = ParagraphStyle('normal_right', parent=styles['Normal'], alignment=TA_RIGHT, fontName=(FONT_NAME or 'Helvetica'), fontSize=9)
+    
     data = [
         [
             Paragraph("<b>Fecha</b>", header_style),
@@ -391,8 +474,23 @@ def generar_reporte_citas_pdf(request):
         buffer = BytesIO()
         doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=72, bottomMargin=72,title=titulo_reporte)
         elements = []
+
+        fecha_gen = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        elements.append(Paragraph(f"Generado el: {fecha_gen} por {usuario_perfil.nombre}", normal_right))
+        elements.append(Spacer(1, 12))
         
         elements.append(Paragraph(titulo_reporte, title_style))
+        elements.append(Spacer(1, 12))
+
+        total_registros = len(data) - 1 # Restamos la fila de encabezado
+        intro_texto = f"Este reporte detalla <b>{total_registros} cita(s)</b>"
+        if fecha_inicio and fecha_fin:
+            intro_texto += f" agendada(s) entre las fechas <b>{fecha_inicio}</b> y <b>{fecha_fin}</b>."
+        else:
+            intro_texto += " (histórico completo)."
+        elements.append(Paragraph(intro_texto, normal_left))
+        elements.append(Spacer(1, 24))
+
         elements.append(Spacer(1, 24))
 
     
@@ -841,4 +939,36 @@ def generar_reporte_pacientes_excel(request):
     except Exception as e:
         traceback.print_exc()
         return HttpResponse("Error interno generando el Excel. Revisa la consola.", status=500)
+    
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def procesar_comando_voz_json(request):
+    """
+    Recibe un comando de texto lo procesa con NLP
+    y devuelve una acción que el fron va a ejecutar    """
+    texto_comando = request.data.get('texto_comando', None)
+    
+    if not texto_comando:
+        return Response(
+            {"error": "No se proporcionó 'texto_comando'."}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+        resultado_nlp = procesar_comando_voz(texto_comando)
+        
+        if "error" in resultado_nlp:
+            return Response(resultado_nlp, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response(resultado_nlp, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        traceback.print_exc()
+        return Response(
+            {"error": f"Error interno en el servidor NLP: {e}"}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
 

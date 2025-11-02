@@ -31,6 +31,10 @@ urlpatterns = [
          views.generar_reporte_pacientes_excel,
          name='pacientes_fechas_excel'),
 
+     path('comando_voz/',
+         views.procesar_comando_voz_json,
+         name='procesar_comando_voz'),
+
     
 
 ]
