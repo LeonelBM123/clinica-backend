@@ -1,4 +1,5 @@
 # en apps/citas/serializers.py
+from datetime import datetime, timedelta
 from rest_framework import serializers
 from .models import *
 from apps.doctores.models import Bloque_Horario
@@ -108,16 +109,15 @@ class CitaMedicaSerializer(serializers.ModelSerializer):
                 f"La fecha seleccionada corresponde a un {dia_semana_cita}, pero el bloque horario es para los {nombre_dia_bloque}."
             )
 
-        # --- El resto de tus validaciones (sin cambios, ahora son seguras) ---
+        # --- Validación de conflictos de horario ---
         citas_en_conflicto = Cita_Medica.objects.filter(
             bloque_horario__medico=bloque.medico,
             fecha=fecha
         ).exclude(estado_cita='CANCELADA')
-        if cita_actual:
-            citas_query = citas_query.exclude(pk=cita_actual.pk)
-
-        if citas_query.count() >= bloque.max_citas_por_bloque:
-            raise serializers.ValidationError("El cupo máximo de citas para este bloque y fecha ya ha sido alcanzado.")
+        
+        # Si estamos editando una cita existente, excluirla de la validación
+        if self.instance:
+            citas_en_conflicto = citas_en_conflicto.exclude(pk=self.instance.pk)
 
         if bloque.max_citas_por_bloque is not None and citas_en_conflicto.filter(bloque_horario=bloque).count() >= bloque.max_citas_por_bloque:
             raise serializers.ValidationError({"detail": "El cupo máximo de citas para este bloque y fecha ya ha sido alcanzado."})

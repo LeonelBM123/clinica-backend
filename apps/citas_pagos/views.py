@@ -106,6 +106,9 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         medico = self.get_user_medico()
         if medico:
             queryset = queryset.filter(bloque_horario__medico=medico)
+        else:
+            print("🔍 [Backend] No se está filtrando por médico")
+            
         return queryset.order_by('-fecha', '-hora_inicio')
 
     def perform_create(self, serializer):
