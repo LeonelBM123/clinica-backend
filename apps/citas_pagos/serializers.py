@@ -100,7 +100,7 @@ class CitaMedicaSerializer(serializers.ModelSerializer):
                  raise serializers.ValidationError({"bloque_horario": "No se pudo determinar el grupo del médico."})
 
 
-        DIAS_SEMANA_MAP = {0: 'LUNES', 1: 'MARTES', 2: 'MIÉRCOLES', 3: 'JUEVES', 4: 'VIERNES', 5: 'SÁBADO', 6: 'DOMINGO'}
+        DIAS_SEMANA_MAP = {0: 'LUNES', 1: 'MARTES', 2: 'MIERCOLES', 3: 'JUEVES', 4: 'VIERNES', 5: 'SABADO', 6: 'DOMINGO'}
         dia_semana_cita = DIAS_SEMANA_MAP.get(fecha.weekday())
 
         if dia_semana_cita != bloque.dia_semana:
