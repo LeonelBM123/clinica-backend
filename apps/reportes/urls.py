@@ -6,18 +6,31 @@ urlpatterns = [
     path('pacientes/pdf/', 
          views.generar_reporte_pacientes_pdf, 
          name='reporte_pacientes_pdf'),
+
     path('medicos/pdf/',
          views.generar_reporte_medicos_pdf,
          name='reporte_medico_pdf'),
+
     path('citas/pdf/',
          views.generar_reporte_citas_pdf,
          name='reporte_citas_pdf'),
+
     path('citas_dia/',
          views.reporte_citas_por_dia,
          name='reporte_citas_dia'),
-    path('citas-excel/', 
+
+    path('citas_excel/', 
          views.generar_reporte_citas_excel, 
          name='excel_reporte_citas'),
+
+    path('pacientes_fechas/',
+         views.reporte_pacientes_por_mes_json,
+         name='reporte_pacientes_fechas'),
+
+    path('pacientes_excel/',
+         views.generar_reporte_pacientes_excel,
+         name='pacientes_fechas_excel'),
+
     
 
 ]

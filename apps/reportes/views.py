@@ -10,11 +10,11 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime,time,timedelta
+from datetime import datetime,time,timedelta,timezone
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Count
-from django.db.models.functions import TruncDate
+from django.db.models.functions import TruncDate, TruncMonth
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side,PatternFill
 
@@ -442,7 +442,7 @@ def generar_reporte_citas_pdf(request):
 @permission_classes([IsAuthenticated])
 def reporte_citas_por_dia(request):
     
-    # --- 1. OBTENER EL GRUPO DEL USUARIO AUTENTICADO ---
+    #usuario 
     try:
         auth_user = request.user
         usuario_perfil = Usuario.objects.select_related('rol', 'grupo').get(correo=auth_user.email)
@@ -675,4 +675,170 @@ def generar_reporte_citas_excel(request):
     except Exception as e:
         traceback.print_exc()
         return HttpResponse("Error interno generando el archivo Excel. Revisa la consola.", status=500)
+
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def reporte_pacientes_por_mes_json(request):
+    
+    #obtener grupo
+    try:
+        auth_user = request.user 
+        usuario_perfil = Usuario.objects.select_related('rol', 'grupo').get(correo=auth_user.email)
+        admin_grupo = usuario_perfil.grupo
+        admin_rol = usuario_perfil.rol
+    except Usuario.DoesNotExist:
+        return Response({"error": "Perfil de usuario no encontrado."}, status=status.HTTP_403_FORBIDDEN)
+    except Exception as e:
+        return Response({"error": f"Error obteniendo perfil: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    #obtener fechas
+    try:
+        fecha_fin = datetime.now().date()
+        fecha_inicio = fecha_fin - timedelta(days=29)
+
+        fecha_inicio_str = request.query_params.get('fecha_inicio', None)
+        fecha_fin_str = request.query_params.get('fecha_fin', None)
+
+        if fecha_inicio_str:
+            fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').date()
+        if fecha_fin_str:
+            fecha_fin = datetime.strptime(fecha_fin_str, '%Y-%m-%d').date()
+    except Exception as e:
+        return Response({"error": f"Formato de fecha inválido: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+
+    #Filtrar Pacientes
+    try:
+        pacientes_qs = Paciente.objects.filter(
+            usuario__fecha_registro__date__range=[fecha_inicio, fecha_fin]
+        )
+
+        if admin_rol and admin_rol.nombre == 'superAdmin':
+            pacientes_filtrados = pacientes_qs
+        elif admin_grupo:
+            pacientes_filtrados = pacientes_qs.filter(usuario__grupo=admin_grupo)
+        else:
+            pacientes_filtrados = Paciente.objects.none() 
+
+        datos_grafico = (
+            pacientes_filtrados
+            .annotate(mes_registro=TruncMonth('usuario__fecha_registro'))
+            .values('mes_registro')
+            .annotate(total=Count('id'))
+            .order_by('mes_registro')
+        )
+        
+        datos_grafico_formato = [
+            {"mes": item['mes_registro'].strftime('%Y-%m'), "total": item['total']}
+            for item in datos_grafico
+        ]
+
+        lista_pacientes_detalle = (
+            pacientes_filtrados
+            .select_related('usuario')
+            .order_by('-usuario__fecha_registro')[:25] 
+        )
+        
+        lista_pacientes_formato = [
+            {
+                "id": p.id,
+                "fecha_registro": p.usuario.fecha_registro.strftime('%Y-%m-%d'),
+                "nombre": p.usuario.nombre,
+                "correo": p.usuario.correo,
+                "historia_clinica": p.numero_historia_clinica,
+            }
+            for p in lista_pacientes_detalle
+        ]
+        
+        return Response({
+            "datos_grafico": datos_grafico_formato,
+            "lista_pacientes": lista_pacientes_formato
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        traceback.print_exc()
+        return Response({"error": "Error al consultar la BD (ver consola)."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+#view para la construccion del excel
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def generar_reporte_pacientes_excel(request):
+    
+    try:
+        auth_user = request.user 
+        usuario_perfil = Usuario.objects.select_related('rol', 'grupo').get(correo=auth_user.email)
+        admin_grupo = usuario_perfil.grupo
+        admin_rol = usuario_perfil.rol
+    except Usuario.DoesNotExist:
+        return HttpResponse("Error: Perfil de usuario no encontrado.", status=403)
+    except Exception as e:
+        return HttpResponse(f"Error obteniendo perfil: {e}", status=500)
+
+    try:
+        today = timezone.now().date()
+        default_start = today.replace(month=1, day=1).isoformat()
+        
+        fecha_fin_str = request.query_params.get('fecha_fin', today.isoformat())
+        fecha_inicio_str = request.query_params.get('fecha_inicio', default_start)
+        
+        fecha_inicio = datetime.fromisoformat(fecha_inicio_str).date()
+        fecha_fin = datetime.fromisoformat(fecha_fin_str).date()
+    except Exception as e:
+        return HttpResponse(f"Formato de fecha inválido: {e}", status=400)
+
+    
+    try:
+        pacientes_qs = Paciente.objects.filter(
+            usuario__fecha_registro__date__range=[fecha_inicio, fecha_fin]
+        )
+
+        if admin_rol and admin_rol.nombre == 'superAdmin':
+            pacientes_filtrados = pacientes_qs.select_related('usuario').order_by('-usuario__fecha_registro')
+            titulo_reporte = "Reporte de Pacientes Nuevos (Todos los Grupos)"
+        elif admin_grupo:
+            pacientes_filtrados = pacientes_qs.filter(usuario__grupo=admin_grupo).select_related('usuario').order_by('-usuario__fecha_registro')
+            titulo_reporte = f"Reporte de Pacientes Nuevos - Clínica: {admin_grupo.nombre}"
+        else:
+            pacientes_filtrados = Paciente.objects.none() 
+            titulo_reporte = "Reporte de Pacientes Nuevos (Sin Grupo Asignado)"
+
+    except Exception as e:
+        traceback.print_exc()
+        return HttpResponse("Error al consultar la BD (ver consola).", status=500)
+
+    try:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Pacientes Nuevos"
+        #encabezado
+        sheet.append(["ID Paciente", "N° Historia Clínica", "Nombre Completo", "Correo", "Teléfono", "Fecha Registro"])
+
+        #datos
+        for paciente in pacientes_filtrados:
+            sheet.append([
+                paciente.id,
+                paciente.numero_historia_clinica,
+                paciente.usuario.nombre,
+                paciente.usuario.correo,
+                paciente.usuario.telefono or '',
+                paciente.usuario.fecha_registro.strftime('%Y-%m-%d %H:%M')
+            ])
+        
+        buffer = BytesIO()
+        workbook.save(buffer)
+        buffer.seek(0)
+        excel_bytes = buffer.read()
+        buffer.close()
+
+        response = HttpResponse(
+            excel_bytes, 
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = f'attachment; filename="reporte_pacientes_nuevos_{fecha_inicio_str}_a_{fecha_fin_str}.xlsx"'
+        return response
+
+    except Exception as e:
+        traceback.print_exc()
+        return HttpResponse("Error interno generando el Excel. Revisa la consola.", status=500)
 
