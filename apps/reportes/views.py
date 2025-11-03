@@ -979,7 +979,7 @@ def procesar_comando_voz_json(request):
     
 
 def download_backup_json_zip(request):
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     buf = io.BytesIO()
 
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
