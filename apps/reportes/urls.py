@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-
+from .views import download_backup_json_zip
 urlpatterns = [
     #esta api es /api/reportes/pacientes_oloquesea/pdf/
     path('pacientes/pdf/', 
@@ -34,7 +34,8 @@ urlpatterns = [
      path('comando_voz/',
          views.procesar_comando_voz_json,
          name='procesar_comando_voz'),
-
+         
+     path("backup/json-zip", download_backup_json_zip, name="backup-json-zip"),
     
 
 ]

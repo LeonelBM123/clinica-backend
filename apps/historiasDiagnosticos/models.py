@@ -162,3 +162,5 @@ class ResultadoExamenes(models.Model):
 
     def __str__(self):
         return f"{self.tipo_examen} - {self.paciente} ({self.fecha_examen})"
+
+
