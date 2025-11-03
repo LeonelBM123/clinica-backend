@@ -12,7 +12,9 @@ from apps.citas_pagos.serializers import CitaMedicaDetalleSerializer
 from apps.citas_pagos.models import Cita_Medica
 from .serializers import PacienteDetalleSerializer  # El serializer de solo lectura
 
-
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from django.db.models import Prefetch, Max, Count
 
 class MultiTenantMixin:
     """Mixin para filtrar datos por grupo del usuario actual"""
@@ -376,3 +378,51 @@ class ResultadoExamenesViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         )
 
 
+#View - Historias Clinicas
+class PatientHistoryView(APIView):
+    """
+    GET /api/pacientes/{paciente_id}/historia
+    Devuelve la historia clínica completa del paciente.
+    """
+    permission_classes = [IsAuthenticated]   # si tu proyecto demo no quiere auth, cámbialo a AllowAny
+
+    def get(self, request, paciente_id):
+        # Multi-tenancy opcional: si usas grupos en JWT/request, aquí podrías filtrar por grupo
+        try:
+            qs = (
+                Paciente.objects
+                .select_related("usuario")
+                .prefetch_related(
+                    # patologías + sus tratamientos
+                    Prefetch(
+                        "patologias",
+                        queryset=PatologiasO.objects.prefetch_related("tratamientos").order_by("nombre"),
+                    ),
+                    # resultados con médico
+                    Prefetch(
+                        "resultados_examenes",
+                        queryset=ResultadoExamenes.objects.select_related("medico", "paciente").order_by("-fecha_creacion"),
+                    ),
+                )
+            )
+            paciente = qs.get(pk=paciente_id)
+        except Paciente.DoesNotExist:
+            return Response({"detail": "Paciente no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+        patologias = list(paciente.patologias.all())
+        resultados = list(paciente.resultados_examenes.all())
+
+        # métricas
+        ultimo_examen = resultados[0].fecha_creacion if resultados else None
+        data = {
+            "paciente": paciente,
+            "patologias": patologias,
+            "resultados_examenes": resultados,
+            "total_patologias": len(patologias),
+            "total_resultados": len(resultados),
+            "ultimo_examen_en": ultimo_examen,
+        }
+
+        # serializar usando el serializer agregado
+        serializer = PatientHistorySerializer(data)
+        return Response(serializer.data, status=status.HTTP_200_OK)
