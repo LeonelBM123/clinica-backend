@@ -1,7 +1,15 @@
+import os
 from django.shortcuts import render
 from django.http import HttpResponse
 from io import BytesIO
+import io
+import json
+import zipfile
+import datetime
 import traceback
+from django.apps import apps
+from django.db import connection
+
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
@@ -969,6 +977,53 @@ def procesar_comando_voz_json(request):
             {"error": f"Error interno en el servidor NLP: {e}"}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+    
 
+def download_backup_json_zip(request):
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    buf = io.BytesIO()
 
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        # 1) Datos de cada modelo en JSON (1 archivo por modelo)
+        for model in apps.get_models():
+            label = model._meta.label  # p.ej. "app.Modelo"
+            # Evitar cargar todo en memoria
+            json_buf = io.StringIO()
+            json_buf.write("[")
+            first = True
+            for row in model.objects.all().values().iterator(chunk_size=1000):
+                if not first:
+                    json_buf.write(",")
+                json_buf.write(json.dumps(row, default=str))
+                first = False
+            json_buf.write("]")
+            zf.writestr(f"{label}.json", json_buf.getvalue())
+
+        # 2) Esquema simple (columnas y tipos)
+        with connection.cursor() as cur:
+            cur.execute("""
+                SELECT table_name, column_name, data_type
+                FROM information_schema.columns
+                WHERE table_schema='public'
+                ORDER BY table_name, ordinal_position
+            """)
+            rows = cur.fetchall()
+        schema_txt = "\n".join(f"{t}.{c}  -  {d}" for t, c, d in rows)
+        zf.writestr("schema.txt", schema_txt)
+
+        # 3) Metadatos tomados del .env
+        meta = {
+            "generated_at": ts,
+            "db_name": os.getenv("DB_NAME"),
+            "db_user": os.getenv("DB_USER"),
+            "db_host": os.getenv("DB_HOST"),
+            "db_port": os.getenv("DB_PORT"),
+            "engine": "postgresql (via Django ORM)",
+        }
+        zf.writestr("metadata.json", json.dumps(meta, indent=2))
+
+    buf.seek(0)
+    resp = HttpResponse(buf.getvalue(), content_type="application/zip")
+    resp["Content-Disposition"] = f'attachment; filename="backup_json_{ts}.zip"'
+    return resp
 
