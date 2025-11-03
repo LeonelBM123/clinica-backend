@@ -12,9 +12,9 @@ from apps.citas_pagos.serializers import CitaMedicaDetalleSerializer
 from apps.citas_pagos.models import Cita_Medica
 from .serializers import PacienteDetalleSerializer  # El serializer de solo lectura
 
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from django.db.models import Prefetch, Max, Count
+from rest_framework.permissions import IsAuthenticated
+from django.db.models import Prefetch
 
 class MultiTenantMixin:
     """Mixin para filtrar datos por grupo del usuario actual"""
@@ -378,7 +378,7 @@ class ResultadoExamenesViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         )
 
 
-#View - Historias Clinicas
+#View
 class PatientHistoryView(APIView):
     """
     GET /api/pacientes/{paciente_id}/historia
