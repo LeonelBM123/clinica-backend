@@ -5,7 +5,6 @@ from io import BytesIO
 import io
 import json
 import zipfile
-import datetime
 import traceback
 from django.apps import apps
 from django.db import connection
