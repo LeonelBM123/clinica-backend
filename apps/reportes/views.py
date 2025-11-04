@@ -978,39 +978,133 @@ def procesar_comando_voz_json(request):
         )
     
 
+# def download_backup_json_zip(request):
+#     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+#     buf = io.BytesIO()
+
+#     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+#         # 1) Datos de cada modelo en JSON (1 archivo por modelo)
+#         for model in apps.get_models():
+#             label = model._meta.label  # p.ej. "app.Modelo"
+#             # Evitar cargar todo en memoria
+#             json_buf = io.StringIO()
+#             json_buf.write("[")
+#             first = True
+#             for row in model.objects.all().values().iterator(chunk_size=1000):
+#                 if not first:
+#                     json_buf.write(",")
+#                 json_buf.write(json.dumps(row, default=str))
+#                 first = False
+#             json_buf.write("]")
+#             zf.writestr(f"{label}.json", json_buf.getvalue())
+
+#         # 2) Esquema simple (columnas y tipos)
+#         with connection.cursor() as cur:
+#             cur.execute("""
+#                 SELECT table_name, column_name, data_type
+#                 FROM information_schema.columns
+#                 WHERE table_schema='public'
+#                 ORDER BY table_name, ordinal_position
+#             """)
+#             rows = cur.fetchall()
+#         schema_txt = "\n".join(f"{t}.{c}  -  {d}" for t, c, d in rows)
+#         zf.writestr("schema.txt", schema_txt)
+
+#         # 3) Metadatos tomados del .env
+#         meta = {
+#             "generated_at": ts,
+#             "db_name": os.getenv("DB_NAME"),
+#             "db_user": os.getenv("DB_USER"),
+#             "db_host": os.getenv("DB_HOST"),
+#             "db_port": os.getenv("DB_PORT"),
+#             "engine": "postgresql (via Django ORM)",
+#         }
+#         zf.writestr("metadata.json", json.dumps(meta, indent=2))
+
+#     buf.seek(0)
+#     resp = HttpResponse(buf.getvalue(), content_type="application/zip")
+#     resp["Content-Disposition"] = f'attachment; filename="backup_json_{ts}.zip"'
+#     return resp
+
 def download_backup_json_zip(request):
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     buf = io.BytesIO()
 
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        # 1) Datos de cada modelo en JSON (1 archivo por modelo)
+        # 1) Datos de cada modelo en SQL (1 archivo por modelo)
         for model in apps.get_models():
             label = model._meta.label  # p.ej. "app.Modelo"
-            # Evitar cargar todo en memoria
-            json_buf = io.StringIO()
-            json_buf.write("[")
-            first = True
+            table_name = model._meta.db_table
+            
+            sql_buf = io.StringIO()
+            sql_buf.write(f"-- Backup de {label}\n")
+            sql_buf.write(f"-- Tabla: {table_name}\n\n")
+            
+            # Obtener nombres de columnas
+            fields = [f.column for f in model._meta.fields]
+            columns_str = ", ".join(fields)
+            
+            # Generar INSERTs
             for row in model.objects.all().values().iterator(chunk_size=1000):
-                if not first:
-                    json_buf.write(",")
-                json_buf.write(json.dumps(row, default=str))
-                first = False
-            json_buf.write("]")
-            zf.writestr(f"{label}.json", json_buf.getvalue())
+                values = []
+                for field_name in fields:
+                    value = row.get(field_name)
+                    
+                    # Formatear el valor según su tipo
+                    if value is None:
+                        values.append("NULL")
+                    elif isinstance(value, bool):
+                        values.append("TRUE" if value else "FALSE")
+                    elif isinstance(value, (int, float)):
+                        values.append(str(value))
+                    elif isinstance(value, datetime):
+                        values.append(f"'{value.isoformat()}'")
+                    elif isinstance(value, date):
+                        values.append(f"'{value.isoformat()}'")
+                    else:
+                        # Escapar comillas simples
+                        escaped = str(value).replace("'", "''")
+                        values.append(f"'{escaped}'")
+                
+                values_str = ", ".join(values)
+                sql_buf.write(f"INSERT INTO {table_name} ({columns_str}) VALUES ({values_str});\n")
+            
+            sql_buf.write("\n")
+            zf.writestr(f"{label}.sql", sql_buf.getvalue())
 
-        # 2) Esquema simple (columnas y tipos)
+        # 2) Esquema completo (CREATE TABLE statements)
         with connection.cursor() as cur:
             cur.execute("""
-                SELECT table_name, column_name, data_type
-                FROM information_schema.columns
-                WHERE table_schema='public'
-                ORDER BY table_name, ordinal_position
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema='public' AND table_type='BASE TABLE'
+                ORDER BY table_name
             """)
-            rows = cur.fetchall()
-        schema_txt = "\n".join(f"{t}.{c}  -  {d}" for t, c, d in rows)
-        zf.writestr("schema.txt", schema_txt)
+            tables = [row[0] for row in cur.fetchall()]
+            
+            schema_sql = io.StringIO()
+            schema_sql.write("-- Esquema de la base de datos\n\n")
+            
+            for table in tables:
+                cur.execute(f"""
+                    SELECT column_name, data_type, character_maximum_length, 
+                    is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_name = %s AND table_schema='public'
+                    ORDER BY ordinal_position
+                """, [table])
+                
+                schema_sql.write(f"-- Tabla: {table}\n")
+                for col_name, dtype, max_len, nullable, default in cur.fetchall():
+                    len_str = f"({max_len})" if max_len else ""
+                    null_str = "NULL" if nullable == "YES" else "NOT NULL"
+                    def_str = f" DEFAULT {default}" if default else ""
+                    schema_sql.write(f"--   {col_name}: {dtype}{len_str} {null_str}{def_str}\n")
+                schema_sql.write("\n")
+            
+            zf.writestr("schema.sql", schema_sql.getvalue())
 
-        # 3) Metadatos tomados del .env
+        # 3) Metadatos
         meta = {
             "generated_at": ts,
             "db_name": os.getenv("DB_NAME"),
@@ -1018,11 +1112,11 @@ def download_backup_json_zip(request):
             "db_host": os.getenv("DB_HOST"),
             "db_port": os.getenv("DB_PORT"),
             "engine": "postgresql (via Django ORM)",
+            "format": "SQL INSERT statements"
         }
         zf.writestr("metadata.json", json.dumps(meta, indent=2))
 
     buf.seek(0)
     resp = HttpResponse(buf.getvalue(), content_type="application/zip")
-    resp["Content-Disposition"] = f'attachment; filename="backup_json_{ts}.zip"'
+    resp["Content-Disposition"] = f'attachment; filename="backup_sql_{ts}.zip"'
     return resp
-
