@@ -17,7 +17,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER,TA_LEFT, TA_RIGHT
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
-from datetime import datetime,time,timedelta,timezone
+from datetime import date, datetime,time,timedelta,timezone
 from rest_framework.response import Response
 from rest_framework import status
 from django.db.models import Count
