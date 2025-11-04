@@ -54,7 +54,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:3000",
     "https://clincavisionex.netlify.app",
-    "https://clinicavisionweb.vercel.app",
+    "https://clinicavisionweb-c7k055jw4-carlos-otsubos-projects.vercel.app",
 
 ]
 
