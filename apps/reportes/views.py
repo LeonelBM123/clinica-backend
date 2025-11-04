@@ -881,7 +881,7 @@ def generar_reporte_pacientes_excel(request):
         return HttpResponse(f"Error obteniendo perfil: {e}", status=500)
 
     try:
-        today = timezone.now().date()
+        today = datetime.now().date()
         default_start = today.replace(month=1, day=1).isoformat()
         
         fecha_fin_str = request.query_params.get('fecha_fin', today.isoformat())
