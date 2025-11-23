@@ -19,4 +19,5 @@ urlpatterns = [
     path('api/citas_pagos/', include('apps.citas_pagos.urls')),
     path('api/diagnosticos/', include('apps.historiasDiagnosticos.urls')), 
     path('api/reportes/', include('apps.reportes.urls')),
+    path('api/bi/', include('apps.business_intelligence.urls')),
 ]
