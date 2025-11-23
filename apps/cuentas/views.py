@@ -15,6 +15,9 @@ from django.utils.dateparse import parse_date
 import secrets
 from django.core.mail import send_mail
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
+from apps.suscripciones.models import PagoSuscripcion,Plan,Suscripcion
+
 
 class MultiTenantMixin:
     """Mixin para filtrar datos por grupo del usuario actual"""
@@ -94,16 +97,37 @@ class GrupoViewSet(viewsets.ModelViewSet):
             return None
     
     def perform_create(self, serializer):
-        """Crear grupo y administrador automáticamente"""
         grupo = serializer.save()
         
-        # Log de creación del grupo
+        plan_id = self.request.data.get('plan_id')
+        
+        if plan_id:
+            try:
+                plan_obj = Plan.objects.get(id=plan_id)
+                
+                Suscripcion.objects.create(
+                    grupo=grupo,
+                    plan=plan_obj,
+                    estado='ACTIVA',  # La activamos inmediatamente
+                    fecha_inicio=timezone.now(),
+                    fecha_fin=timezone.now() + timedelta(days=30), # 1 mes de duración inicial
+                    renovacion_automatica=True
+                )
+                print(f"Suscripción creada exitosamente para {grupo.nombre} con plan {plan_obj.nombre}")
+                
+            except Plan.DoesNotExist:
+                print(f"El plan con id {plan_id} no existe. Se creó el grupo sin suscripción.")
+            except Exception as e:
+                print(f"Error creando suscripción: {e}")
+        else:
+            print("No se recibió plan_id en el registro.")
+
         log_action(
             request=self.request,
             accion=f"Se registró la nueva clínica {grupo.nombre}",
             objeto=f"Grupo: {grupo.nombre} (id:{grupo.id})",
-            usuario=None  # Registro público, sin usuario
-        )
+            usuario=None 
+                            )
     
     @action(detail=True, methods=['post'])
     def suspender(self, request, pk=None):
@@ -215,7 +239,29 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
         
         return Response({'message': 'Contraseña actualizada correctamente'}, status=status.HTTP_200_OK)
 
+
+
+#si esto no funca solo eliminar la parte de las validaciones, lo hice para restringir los privilegios dependiendo del
+#tipo de suscripcion
     def perform_create(self, serializer):
+
+        usuario_nuevo = serializer.validated_data
+        grupo = self.get_user_grupo()
+        
+        if grupo:
+            suscripcion = getattr(grupo, 'suscripcion_info', None)
+            
+            if suscripcion and suscripcion.esta_activa: 
+                plan = suscripcion.plan
+                usuarios_actuales = Usuario.objects.filter(grupo=grupo).count()
+                
+                if usuarios_actuales >= plan.limite_usuarios:
+                    raise ValidationError({
+                        "error": f"Has alcanzado el límite de {plan.limite_usuarios} usuarios de tu plan '{plan.nombre}'. Actualiza tu suscripción para agregar más."
+                    })
+            else:
+                raise ValidationError({"error": "Tu clínica no tiene una suscripción activa."})
+        
         usuario_obj = serializer.save()
         actor = get_actor_usuario_from_request(self.request)
         log_action(
@@ -224,6 +270,9 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             objeto=f"Usuario: {usuario_obj.nombre} (id:{usuario_obj.id})",
             usuario=actor
         )
+
+
+
 
     def perform_destroy(self, instance):
         nombre = instance.nombre
@@ -435,3 +484,28 @@ class BitacoraViewSet(MultiTenantMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Bitacora.objects.all()
         return self.filter_by_grupo(qs)
+    
+
+#nueva view necesaria para los pagos de las suscripciones gaaaa
+
+
+
+class TieneSuscripcionActiva(permissions.BasePermission):
+    
+    def has_permissions(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+            
+        usuario = getattr(request.user, 'usuario_perfil', None) 
+        
+        if not usuario or not usuario.grupo:
+            return False
+            
+        try:
+            suscripcion = usuario.grupo.suscripcion_info
+            if suscripcion.esta_activa():
+                return True
+        except:
+            pass
+            
+        return False 
