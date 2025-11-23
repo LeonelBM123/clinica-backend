@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     'apps.citas_pagos',
     'apps.historiasDiagnosticos',
     'apps.reportes',
+    'apps.avisos',
 ]
 
 # Middleware
@@ -152,3 +153,7 @@ cloudinary.config(
 # Archivos multimedia (para manejo de uploads)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Configuración de OneSignal
+ONESIGNAL_APP_ID = os.getenv('ONESIGNAL_APP_ID')
+ONESIGNAL_REST_API_KEY = os.getenv('ONESIGNAL_REST_API_KEY')

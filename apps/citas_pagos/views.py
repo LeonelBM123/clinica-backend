@@ -243,7 +243,7 @@ class CitaMedicaViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             return Response({'error': 'No se encontró un paciente asociado a este usuario'},
                            status=status.HTTP_404_NOT_FOUND)
 
-    # --- ¡ACCIÓN CORREGIDA! (NO GUARDA) ---
+    # --- ¡ACCIÓN CORREGIDA!  ---
     @action(detail=True, methods=['post'], url_path='generar-reporte-ia')
     def generar_reporte_ia(self, request, pk=None):
         """
