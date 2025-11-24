@@ -3,6 +3,13 @@ from apps.historiasDiagnosticos.models import Paciente
 from apps.doctores.models import Bloque_Horario
 from apps.cuentas.models import Grupo
 class Cita_Medica(models.Model):
+    TIPO_CITA = [
+            ('CONSULTA', 'Consulta'),
+            ('EMERGENCIA', 'Emergencia'),
+            ('CONTROL', 'Control'),
+            ('OTRO', 'Otro'),
+        ]
+
     ESTADOS_CITA = [
         ('PENDIENTE', 'Pendiente'),
         ('CONFIRMADA', 'Confirmada'),
@@ -37,6 +44,12 @@ class Cita_Medica(models.Model):
         verbose_name="Grupo al que pertenece",
     )
     reporte = models.TextField(blank=True, null=True)
+    tipo = models.CharField(
+        max_length=30,
+        choices=TIPO_CITA,
+        default='CONSULTA',
+        help_text="Tipo de cita médica"
+    )
     class Meta:
         verbose_name = "Cita Médica"
         verbose_name_plural = "Citas Médicas"
