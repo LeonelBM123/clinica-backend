@@ -39,7 +39,7 @@ class CitaMedicaSerializer(serializers.ModelSerializer):
             'id', 'fecha', 'hora_inicio', 'hora_fin', 'estado_cita', 'notas',
             'paciente', 'paciente_nombre', 'bloque_horario', 'medico', 'medico_nombre',
             'grupo', 'motivo_cancelacion', 'calificacion', 'comentario_calificacion',
-            'reporte'
+            'reporte', 'tipo'
         ]
         read_only_fields = ['grupo', 'hora_fin', 'paciente_nombre', 'medico_nombre']
 
