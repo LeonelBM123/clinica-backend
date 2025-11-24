@@ -21,7 +21,7 @@ class SuscripcionSerializer(serializers.ModelSerializer):
     )
     
     es_activa = serializers.BooleanField(source='esta_activa', read_only=True)
-    dias_restantes = serializers.IntegerField(source='dias_restantes', read_only=True)
+    dias_restantes = serializers.IntegerField( read_only=True)
     nombre_grupo = serializers.CharField(source='grupo.nombre', read_only=True)
 
     class Meta:

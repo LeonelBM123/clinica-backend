@@ -329,6 +329,17 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
             )
         
         token, created = Token.objects.get_or_create(user=user)
+
+        permiso_reportes = False
+        try:
+            # Verificamos si tiene grupo y suscripción vinculada
+            if usuario_perfil.grupo and hasattr(usuario_perfil.grupo, 'suscripcion_info'):
+                suscripcion = usuario_perfil.grupo.suscripcion_info
+                if suscripcion.esta_activa:
+                    permiso_reportes = suscripcion.plan.reportes
+        except Exception as e:
+            print(f"Error verificando permisos de reportes: {e}")
+        
         
         actor = get_actor_usuario_from_request(request)
         log_action(
@@ -346,7 +357,8 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
                 "rol": usuario_perfil.rol.nombre,  # Envía el valor interno, no el display
                 "grupo_id": usuario_perfil.grupo.id if usuario_perfil.grupo else None,
                 "grupo_nombre": usuario_perfil.grupo.nombre if usuario_perfil.grupo else None,
-                "puede_acceder": usuario_perfil.puede_acceder_sistema()
+                "puede_acceder": usuario_perfil.puede_acceder_sistema(),
+                "reportes":permiso_reportes
             },
             status=status.HTTP_200_OK
         )
