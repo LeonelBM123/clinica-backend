@@ -189,3 +189,16 @@ class BitacoraSerializer(serializers.ModelSerializer):
     def get_usuario(self, obj):
         # Si existe usuario, retorna el nombre, si no, retorna "Anónimo"
         return obj.usuario.nombre if obj.usuario else "Anónimo"
+
+
+class BitacoraListSerializer(serializers.ModelSerializer):
+    usuario = serializers.SerializerMethodField()
+    grupo_nombre = serializers.CharField(source='grupo.nombre', default='', read_only=True)
+
+    class Meta:
+        model = Bitacora
+        # Omite 'extra' para aligerar la lista
+        fields = ['id', 'usuario', 'grupo_nombre', 'accion', 'ip', 'objeto', 'timestamp']
+
+    def get_usuario(self, obj):
+        return obj.usuario.nombre if obj.usuario else "Anónimo"

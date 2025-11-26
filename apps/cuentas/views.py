@@ -17,6 +17,7 @@ from django.core.mail import send_mail
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 from apps.suscripciones.models import PagoSuscripcion,Plan,Suscripcion
+from .pagination import BitacoraCursorPagination
 
 
 class MultiTenantMixin:
@@ -462,18 +463,18 @@ class UsuarioViewSet(MultiTenantMixin, viewsets.ModelViewSet):
 
 class BitacoraListAPIView(MultiTenantMixin, generics.ListAPIView):
     permission_classes = [IsAuthenticated]
-    serializer_class = BitacoraSerializer
-    pagination_class = None
+    serializer_class = BitacoraListSerializer     # <- usar versión liviana
+    pagination_class = BitacoraCursorPagination
 
     def get_queryset(self):
-        qs = Bitacora.objects.all()
+        qs = Bitacora.objects.select_related("usuario", "grupo").all()
         qs = self.filter_by_grupo(qs)
-        
+
         # Filtros adicionales
         start = self.request.query_params.get('start')
         end = self.request.query_params.get('end')
         usuario = self.request.query_params.get('usuario')
-        
+
         if start:
             sd = parse_date(start)
             if sd:
@@ -487,16 +488,28 @@ class BitacoraListAPIView(MultiTenantMixin, generics.ListAPIView):
                 qs = qs.filter(usuario__id=int(usuario))
             else:
                 qs = qs.filter(usuario__nombre__icontains=usuario)
+
+        # Orden determinista (cursor pagination requiere ordering)
+        qs = qs.order_by("-timestamp", "-id")
         return qs
 
+
 class BitacoraViewSet(MultiTenantMixin, viewsets.ModelViewSet):
-    serializer_class = BitacoraSerializer
     permission_classes = [IsAuthenticated]
-    
+    pagination_class = BitacoraCursorPagination  # activa cursor pagination
+
     def get_queryset(self):
-        qs = Bitacora.objects.all()
+        qs = Bitacora.objects.select_related("usuario", "grupo").all()
+        # Asegurar un ordering determinista: timestamp DESC, id DESC (evita ambigüedad)
+        qs = qs.order_by("-timestamp", "-id")
         return self.filter_by_grupo(qs)
-    
+
+    def get_serializer_class(self):
+        # Usar serializer liviano en list para reducir payload;
+        # usar el serializer completo para retrieve/create/update
+        if self.action == 'list':
+            return BitacoraListSerializer
+        return BitacoraSerializer
 
 #nueva view necesaria para los pagos de las suscripciones gaaaa
 
